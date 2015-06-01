@@ -49,11 +49,11 @@ Automatically create non-existing repositories
 To manage the init option for the auto created repos you can use
 the `repo_init_options` option that should be
 
-- a [RepositoryInitOptions](RepoInitOptions) object
+- a [RepositoryInitOptions][RepoInitOptions] object
 
 or
 
-- a `(repo_path, req)` callback returning a [RepositoryInitOptions](RepoInitOptions) object
+- a `(repo_path, req)` callback returning a [RepositoryInitOptions][RepoInitOptions] object
 
 ### options.git_exec
 
