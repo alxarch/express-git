@@ -24,5 +24,13 @@
   },
   "devDependencies": {
     "coffee-script": "^1.9.3"
-  }
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/alxarch/express-git"
+  },
+  "bugs": {
+    "url": "https://github.com/alxarch/express-git/issues"
+  },
+  "homepage": "https://github.com/alxarch/express-git"
 }
