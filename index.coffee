@@ -139,7 +139,7 @@ module.exports = (options={}) ->
 				res.end()
 				next()
 
-	UnhandledError = (err) -> (err.statusCode or null)?
+	UnhandledError = (err) -> not (err.statusCode or null)?
 
 	serve_static = (req, res, next) ->
 		{repo} = req
@@ -172,11 +172,21 @@ module.exports = (options={}) ->
 	if opt.serve_static
 		git_http_backend.get "/:repo_path(*).git/raw/:path(*)", serve_static
 
+	git_http_backend.use (err, req, res, next) ->
+		if err.statusCode
+			res.status err.statusCode
+			res.set "Content-Type", "plain/text"
+			res.end err.message
+		else
+			next err
+
 	git_http_backend
 
 class ServerError extends Error
-	statusCode: 500
+	constructor: (@message, @statusCode=500) -> super
+
 class NotFoundError extends Error
-	statusCode: 404
+	constructor: (@message, @statusCode=404) -> super
+
 class BadRequestError extends Error
-	statusCode: 400
+	constructor: (@message, @statusCode=400) -> super
