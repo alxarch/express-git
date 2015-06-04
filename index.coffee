@@ -20,7 +20,16 @@ defaults =
 	git_project_root: null
 	git_executable: which "git"
 
-asref = (name) -> if name and Reference.isValidName name then name else "HEAD"
+asref = (name) ->
+	if not name
+		"HEAD"
+	else if g.Reference.isValidName name
+		name
+	else if g.Reference.isValidName (name = "refs/heads/#{name}")
+		name
+	else
+		"HEAD"
+
 pkt_line = (line) ->
 	unless line instanceof Buffer
 		line = new Buffer "#{line}"
