@@ -1,24 +1,69 @@
 assign = require "object-assign"
-{Reference, Repository, RepositoryInitOptions} = require "nodegit"
+g = require "nodegit"
+{Reference, Repository, RepositoryInitOptions} = g
+mime = require "mime-types"
+{resolve} = require "bluebird"
 
 {spawn, exec} = require "child_process"
 {which, test} = require "shelljs"
 express = require "express"
 {join} = require "path"
+{createReadStream} = require "fs"
+{PassThrough, Transform} = require "stream"
+{createUnzip} = require "zlib"
 
 defaults =
 	auto_init: yes
+	serve_static: yes
 	repo_init_options: (repo, req) -> null
 	only_bare: yes
 	git_project_root: null
 	git_executable: which "git"
 
+asref = (name) -> if name and Reference.isValidName name then name else "HEAD"
 pkt_line = (line) ->
 	unless line instanceof Buffer
 		line = new Buffer "#{line}"
 	prefix = new Buffer "0000#{line.length.toString 16}".substr -4, 4
 	Buffer.concat [prefix, line]
 
+class GitObjectReadStream extends Transform
+	_transform: (chunk, encoding, callback) ->
+		unless @header
+			for c, i in chunk when c is 0
+				break
+			@header = "#{chunk.slice 0, i}"
+			[@type, @size] = @header.split /\s+/
+			@emit "header", @type, @size
+			chunk = chunk.slice i + 1
+		@push chunk
+		callback()
+
+stream_blob = (repo, oid) ->
+	p = new Promise (resolve, reject) ->
+		loose = join repo.path(), "objects", oid[0..1], oid[2..]
+		stream = new GitObjectReadStream()
+		stream.on "header", -> resolve stream
+		stream.on "error", reject
+		try
+			createReadStream loose
+			.pipe createUnzip()
+			.pipe stream
+		catch err
+			reject err
+		return
+	p.catch ->
+		g.Blob.lookup repo, g.Oid.fromSting oid
+		.then (blob) ->
+			data = blob.rawcontent()
+			blob.free()
+			stream = new PassThrough
+			stream.type = "blob"
+			stream.size = data.length
+			new Promise (resolve, reject) ->
+				resolve stream
+				stream.write data
+				stream.end()
 
 module.exports = (options={}) ->
 
@@ -64,7 +109,7 @@ module.exports = (options={}) ->
 			next()
 		.catch next
 
-	git_http_backend.post "/:repo_path(*)/git-:service(receive-pack|upload-pack)", (req, res, next) ->
+	git_http_backend.post "/:repo_path(*).git/git-:service(receive-pack|upload-pack)", (req, res, next) ->
 		[service] = req.params
 		res.set 'Content-Type', "application/x-git-#{service}-result"
 		args = [service, '--stateless-rpc', req.repo.path()]
@@ -78,7 +123,7 @@ module.exports = (options={}) ->
 			else
 				next new ServerError "Exit code #{code} returned from #{service}"
 
-	git_http_backend.get "/:repo_path(*)/info/refs", (req, res, next) ->
+	git_http_backend.get "/:repo_path(*).git/info/refs", (req, res, next) ->
 		{service} = req.query
 		res.set 'Content-Type', "application/x-#{service}-advertisement"
 		unless service in ["git-upload-pack", "git-receive-pack"]
@@ -94,12 +139,38 @@ module.exports = (options={}) ->
 				res.end()
 				next()
 
-	git_http_backend.use (err, req, res, next) ->
-		if err.statusCode
-			res.status err.statusCode
-			res.text err.statusMessage or err.message
-		else
-			next err
+	UnhandledError = (err) -> (err.statusCode or null)?
+
+	serve_static = (req, res, next) ->
+		{repo} = req
+		[_, path] = req.params
+
+		free = []
+		refname = asref req.query?.ref 
+		resolve refname
+		.then (refname) -> if refname is "HEAD" then repo.head() else repo.getReference refname
+		.catch UnhandledError, -> throw new NotFoundError "Reference #{refname} not found"
+		.then (ref) -> g.Commit.lookup repo, ref.target()
+		.catch UnhandledError, -> throw new NotFoundError "Commit not found"
+		.tap (commit) -> free.push commit
+		.then (commit) -> commit.getTree()
+		.tap (tree) -> free.push tree
+		.then (tree) -> tree.entryByPath path
+		.catch UnhandledError, -> throw new NotFoundError "Entry not found"
+		.then (entry) ->
+			unless entry.isBlob()
+				throw new BadRequestError "Path doesn't lead to a BLOB"
+			stream_blob repo, entry.sha()
+		.then (blob) ->
+			res.set "Content-Type", mime.lookup(path) or "application/octet-stream"
+			res.set "Content-Length", blob.size
+			blob.pipe res
+		.finally -> (o.free() for o in free)
+		.catch UnhandledError, (err) -> throw new ServerError err.message
+		.catch next
+
+	if opt.serve_static
+		git_http_backend.get "/:repo_path(*).git/raw/:path(*)", serve_static
 
 	git_http_backend
 
