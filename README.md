@@ -37,6 +37,15 @@ pull and push as usual.
 
 The base dir for repositories.
 
+### options.serve_static
+
+> default: yes
+
+Serve files from git repos.
+
+You can access all files at `/path/to/repo.git/raw/path/to/file`.
+To access a file in a ref other than HEAD use `?ref=refname` query string param.
+
 ### options.auto_init
 
 > default: yes
