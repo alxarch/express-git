@@ -60,7 +60,7 @@ module.exports = (options={}) ->
 			ceilings: [GIT_PROJECT_ROOT]
 		.catch (err) ->
 			if init_options and not test "-e", git_dir
-				ezgit.Repository.init repo_path, init_options
+				ezgit.Repository.init git_dir, init_options
 			else
 				null
 		.catch (err) -> null
