@@ -43,8 +43,9 @@ The base dir for repositories.
 
 Serve files from git repos.
 
-You can access all files at `/path/to/repo.git/raw/path/to/file`.
-To access a file in a ref other than HEAD use `?ref=refname` query string param.
+You can access all files at `/path/to/repo.git/~raw/path/to/file`.
+To access a file in a ref other than HEAD use 
+`/path/to/repo.git/refs/heads/foo/~raw/path/to/file`.
 
 ### options.auto_init
 
@@ -53,16 +54,50 @@ To access a file in a ref other than HEAD use `?ref=refname` query string param.
 Automatically create non-existing repositories
 
 
-### options.repo_init_options
+### options.init_options
 
 To manage the init option for the auto created repos you can use
-the `repo_init_options` option that should be
+the `init_options` option that should be an object.
 
-- a [RepositoryInitOptions][RepoInitOptions] object
+#### options.init_options.bare
 
-or
+> default: true
 
-- a `(repo_path, req)` callback returning a [RepositoryInitOptions][RepoInitOptions] object
+#### options.init_options.template
+
+> default: null
+
+#### options.init_options.mkdir
+
+> default: true
+
+Create the dir for the repository if does not exist
+
+#### options.init_options.mkdirp
+
+> default: true
+
+Create the all required dirs for the repository path
+
+#### options.init_options.shared
+
+> default: null
+
+Permission mask to apply to the repo dir (git init --shared)
+
+#### options.init_options.head
+
+> default: 'master'
+
+The branch to which HEAD will point.
+
+#### options.init_options.origin
+
+> default: null
+
+A default origin remote to use for this remote.
+Usually not needed as the repo will probably act as origin for others.
+
 
 ### options.git_exec
 
