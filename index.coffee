@@ -2,9 +2,10 @@ assign = require "object-assign"
 g = require "nodegit"
 {Reference, Repository, RepositoryInitOptions} = g
 mime = require "mime-types"
-{resolve} = require "bluebird"
+Promise = require "bluebird"
 
 {spawn, exec} = require "child_process"
+exec = Promise.promisify exec
 {which, test} = require "shelljs"
 express = require "express"
 {join} = require "path"
@@ -15,20 +16,12 @@ express = require "express"
 defaults =
 	auto_init: yes
 	serve_static: yes
+	authorize: (action, params, req) -> yes
 	repo_init_options: (repo, req) -> null
 	only_bare: yes
 	git_project_root: null
 	git_executable: which "git"
 
-asref = (name) ->
-	if not name
-		"HEAD"
-	else if g.Reference.isValidName name
-		name
-	else if g.Reference.isValidName (name = "refs/heads/#{name}")
-		name
-	else
-		"HEAD"
 
 pkt_line = (line) ->
 	unless line instanceof Buffer
@@ -74,6 +67,9 @@ stream_blob = (repo, oid) ->
 				stream.write data
 				stream.end()
 
+
+UnhandledError = (err) -> not (err.statusCode or null)?
+
 module.exports = (options={}) ->
 
 	opt = assign {}, defaults, options
@@ -83,7 +79,8 @@ module.exports = (options={}) ->
 	{BARE, NO_REINIT, MKDIR, MKPATH} = Repository.INIT_FLAG
 	REPO_INIT_FLAGS = BARE | NO_REINIT | MKPATH | MKDIR
 
-	git_http_backend = new express.Router()
+	git_http_backend = express()
+	git_http_backend.disable "etag"
 
 	git_http_backend.use (req, res, next) ->
 		res.set
@@ -91,73 +88,95 @@ module.exports = (options={}) ->
 			'Expires': (new Date '1900').toISOString()
 			'Cache-Control': 'no-cache, max-age=0, must-revalidate'
 		next()
+	
+	authorize = (service, params, req) ->
+		if typeof opt.authorize is "function"
+			Promise.resolve opt.authorize service, params, req
+			.catch UnhandledError, (err) ->
+				throw new UnauthorizedError err.message or "Not authorized"
+		else
+			Promise.resolve null
 
-	git_http_backend.param "repo_path", (req, res, next, repo_path) ->
+	open_repo = (repo_path, auto_init) ->
 		git_dir = join GIT_PROJECT_ROOT, repo_path
-		Repository.open git_dir
+		Promise.resolve Repository.open git_dir
 		.catch (err) ->
-			return null unless opt.auto_init and not test "-e", git_dir
+			if auto_init and not test "-e", git_dir
+				{repo_init_options} = opt
+				if typeof repo_init_options is "function"
+					repo_init_options = repo_init_options repo_path, req
 
-			{repo_init_options} = opt
-			if typeof repo_init_options is "function"
-				repo_init_options = repo_init_options repo_path, req
+				unless repo_init_options instanceof RepositoryInitOptions
+					repo_init_options = new RepositoryInitOptions()
 
-			unless repo_init_options instanceof RepositoryInitOptions
-				repo_init_options = new RepositoryInitOptions()
+				repo_init_options.flags |= REPO_INIT_FLAGS
+				repo_init_options.initialHead ?= "master"
 
-			repo_init_options.flags |= REPO_INIT_FLAGS
-			repo_init_options.initialHead ?= "master"
-
-			Repository.initExt git_dir, repo_init_options
+				Repository.initExt git_dir, repo_init_options
+			else
+				null
+		.catch (err) -> null
 		.then (repo) ->
 			unless repo instanceof Repository
 				throw new NotFoundError "Repository #{repo_path} not found"
+
 			if opt.only_bare and not repo.isBare()
 				throw new BadRequestError "Repository #{repo_path} is not bare"
-			req.repo = repo
-			next()
+			repo
+
+	# git_http_backend.post "/:repo_path(*).git/git-:service(receive-pack|upload-pack)", (req, res, next) ->
+	git_http_backend.post /^\/(.*)\.git\/git-(receive-pack|upload-pack)$/, (req, res, next) ->
+		Promise.join req.params[0], req.params[1], (repo_path, service) ->
+			authorize service, {repo_path}, req
+			.then -> open_repo repo_path, opt.auto_init
+			.then (repo) ->
+				res.set 'Content-Type', "application/x-git-#{service}-result"
+				new Promise (resolve, reject) ->
+					args = [service, '--stateless-rpc', repo.path()]
+					git = spawn GIT_EXEC, args
+					req.pipe git.stdin
+					git.stdout.pipe res
+					git.stderr.pipe process.stderr
+					git.on "exit", (code) ->
+						if code is 0
+							resolve()
+						else
+							reject new ServerError "Exit code #{code} returned from #{service}"
+			.then -> next()
+		.catch UnhandledError, (err) -> new ServerError err.message
 		.catch next
 
-	git_http_backend.post "/:repo_path(*).git/git-:service(receive-pack|upload-pack)", (req, res, next) ->
-		[service] = req.params
-		res.set 'Content-Type', "application/x-git-#{service}-result"
-		args = [service, '--stateless-rpc', req.repo.path()]
-		git = spawn GIT_EXEC, args
-		req.pipe git.stdin
-		git.stdout.pipe res
-		git.stderr.pipe process.stderr
-		git.on "exit", (code) ->
-			if code is 0
-				next()
-			else
-				next new ServerError "Exit code #{code} returned from #{service}"
-
-	git_http_backend.get "/:repo_path(*).git/info/refs", (req, res, next) ->
-		{service} = req.query
-		res.set 'Content-Type', "application/x-#{service}-advertisement"
-		unless service in ["git-upload-pack", "git-receive-pack"]
-			return next new BadRequestError "Invalid service #{service}"
-
-		res.write pkt_line "# service=#{service}\n0000"
-		cmd = "#{GIT_EXEC} #{service.replace /^git-/, ''} --stateless-rpc --advertise-refs #{req.repo.path()}"
-		exec cmd, (err, stdout, stderr) ->
-			if err
-				next new ServerError err.message
-			else
+	git_http_backend.get /^\/(.*)\.git\/info\/refs$/, (req, res, next) ->
+		Promise.join req.query.service, req.params[0], (service, repo_path) ->
+			unless service in ["git-upload-pack", "git-receive-pack"]
+				throw new BadRequestError "Invalid service #{service}"
+			service = service.replace /^git-/, ''
+			authorize service, {repo_path} , req
+			.then -> open_repo repo_path, opt.auto_init
+			.then (repo) ->
+				res.set 'Content-Type', "application/x-#{service}-advertisement"
+				exec "#{GIT_EXEC} #{service} --stateless-rpc --advertise-refs #{repo.path()}"
+			.spread (stdout, stderr) ->
+				res.write pkt_line "# service=#{service}\n0000"
 				res.write stdout
 				res.end()
 				next()
-
-	UnhandledError = (err) -> not (err.statusCode or null)?
+		.catch UnhandledError, (err) -> throw new ServerError err.message
+		.catch next
 
 	serve_static = (req, res, next) ->
-		{repo} = req
-		[_, path] = req.params
 
+		[repo_path, refname, path] = req.params
+		refname ?= "HEAD"
 		free = []
-		refname = asref req.query?.ref 
-		resolve refname
-		.then (refname) -> if refname is "HEAD" then repo.head() else repo.getReference refname
+		repo = null
+		authorize "raw", {repo_path, refname, path} , req
+		.then -> open_repo repo_path, no
+		.then (r) ->
+			repo = r
+			if refname is "HEAD"
+			then repo.head()
+			else repo.getReference refname
 		.catch UnhandledError, -> throw new NotFoundError "Reference #{refname} not found"
 		.then (ref) -> g.Commit.lookup repo, ref.target()
 		.catch UnhandledError, -> throw new NotFoundError "Commit not found"
@@ -179,13 +198,22 @@ module.exports = (options={}) ->
 		.catch next
 
 	if opt.serve_static
-		git_http_backend.get "/:repo_path(*).git/raw/:path(*)", serve_static
+		git_http_backend.get ///
+			^/
+			(.*)\.git        # Repo path MUST end with .git
+			(?:/(refs/.*))?  # ref name is optional (default: HEAD)
+							 # Having it in path allows relative paths
+			/~raw/           # We need ~ to mark the end of a valid ref name
+			(.*)             # Rest of the path is used to resolve a file in workdir
+			$
+			///, serve_static
 
 	git_http_backend.use (err, req, res, next) ->
 		if err.statusCode
 			res.status err.statusCode
-			res.set "Content-Type", "plain/text"
-			res.end err.message
+			res.set "Content-Type", "text/plain"
+			res.send err.message
+			res.end()
 		else
 			next err
 
@@ -199,3 +227,6 @@ class NotFoundError extends Error
 
 class BadRequestError extends Error
 	constructor: (@message, @statusCode=400) -> super
+
+class UnauthorizedError extends Error
+	constructor: (@message, @statusCode=401) -> super
