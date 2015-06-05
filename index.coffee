@@ -101,7 +101,9 @@ module.exports = (options={}) ->
 		git_dir = join GIT_PROJECT_ROOT, repo_path
 		Promise.resolve Repository.open git_dir
 		.catch (err) ->
+			
 			if auto_init and not test "-e", git_dir
+				console.log "AUTO INIT"
 				{repo_init_options} = opt
 				if typeof repo_init_options is "function"
 					repo_init_options = repo_init_options repo_path, req
@@ -146,7 +148,7 @@ module.exports = (options={}) ->
 		.catch UnhandledError, (err) -> new ServerError err.message
 		.catch next
 
-	git_http_backend.get /^\/(.*)\.git\/info\/refs$/, (req, res, next) ->
+	git_http_backend.get /\/(.*)\.git\/info\/refs/, (req, res, next) ->
 		Promise.join req.query.service, req.params[0], (service, repo_path) ->
 			unless service in ["git-upload-pack", "git-receive-pack"]
 				throw new BadRequestError "Invalid service #{service}"
@@ -154,11 +156,12 @@ module.exports = (options={}) ->
 			authorize service, {repo_path} , req
 			.then -> open_repo repo_path, opt.auto_init
 			.then (repo) ->
-				res.set 'Content-Type', "application/x-#{service}-advertisement"
+				res.set 'Content-Type', "application/x-git-#{service}-advertisement"
 				exec "#{GIT_EXEC} #{service} --stateless-rpc --advertise-refs #{repo.path()}"
 			.spread (stdout, stderr) ->
-				res.write pkt_line "# service=#{service}\n0000"
+				res.write pkt_line "# service=git-#{service}\n0000"
 				res.write stdout
+				process.stderr.write stderr
 				res.end()
 				next()
 		.catch UnhandledError, (err) -> throw new ServerError err.message
