@@ -39,7 +39,7 @@ The base dir for repositories.
 
 ### options.serve_static
 
-> default: yes
+> default: true
 
 Serve files from git repos.
 
@@ -49,10 +49,25 @@ To access a file in a ref other than HEAD use
 
 ### options.auto_init
 
-> default: yes
+> default: true
 
 Automatically create non-existing repositories
 
+### options.authorize
+
+> default: noop
+
+A callback to use to authorize requests.
+The signature is `(service, repo_path, req)`.
+Possible service names are:
+
+ - `raw` for raw file requests (if `option.serve_static` is enabled)
+ - `receive-pack` for pull requests
+ - `upload-pack` for push requests
+ - `init` for creating a non-existing repo (if `option.auto_init` is enabled)
+
+To prevent an action the callback should throw an error that will triger a
+401 error response with the body set to the error's message.
 
 ### options.init_options
 
