@@ -51,7 +51,7 @@ module.exports = (options={}) ->
 		else
 			Promise.resolve null
 
-	open_repo = (repo_path, init_options) ->
+	open_repo = (repo_path, req) ->
 		git_dir = path.join GIT_PROJECT_ROOT, repo_path
 		ezgit.Repository.open git_dir,
 			bare: yes
@@ -59,8 +59,9 @@ module.exports = (options={}) ->
 			# searching in it's parents for .git dirs
 			ceilings: [GIT_PROJECT_ROOT]
 		.catch (err) ->
-			if init_options and not test "-e", git_dir
-				ezgit.Repository.init git_dir, init_options
+			if opt.auto_init and not test "-e", git_dir
+				authorize "init", {repo_path}, req
+				.then -> ezgit.Repository.init git_dir, init_options repo_path, req
 			else
 				null
 		.catch (err) -> null
@@ -80,11 +81,11 @@ module.exports = (options={}) ->
 	git_http_backend.post /^\/(.*)\.git\/git-(receive-pack|upload-pack)$/, (req, res, next) ->
 		Promise.join req.params[0], req.params[1], (repo_path, service) ->
 			authorize service, {repo_path}, req
-			.then -> open_repo repo_path,  init_options repo_path, req
+			.then -> open_repo repo_path, req
 			.then (repo) ->
 				res.set 'Content-Type', "application/x-git-#{service}-result"
 				new Promise (resolve, reject) ->
-					args = [service, '--stateless-rpc', repo.path()]
+					args = [service, '--stateless-rpc', repo.path]
 					git = spawn GIT_EXEC, args
 					req.pipe git.stdin
 					git.stdout.pipe res
@@ -104,7 +105,7 @@ module.exports = (options={}) ->
 				throw new BadRequestError "Invalid service #{service}"
 			service = service.replace /^git-/, ''
 			authorize service, {repo_path} , req
-			.then -> open_repo repo_path, opt.auto_init
+			.then -> open_repo repo_path, req
 			.then (repo) ->
 				res.set 'Content-Type', "application/x-git-#{service}-advertisement"
 				exec "#{GIT_EXEC} #{service} --stateless-rpc --advertise-refs #{repo.path}"
