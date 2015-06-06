@@ -4,19 +4,23 @@ Promise = require "bluebird"
 
 {spawn, exec} = require "child_process"
 exec = Promise.promisify exec
-{which, test} = require "shelljs"
+{ln, mkdir, which, test} = require "shelljs"
 express = require "express"
 path = require "path"
 ezgit = require "./ezgit"
+uuid = require "uuid"
+helpers = require "./helpers"
 
 defaults =
 	auto_init: yes
 	serve_static: yes
 	authorize: (service, params, req) -> yes
-	init_options: (repo, req) -> {}
+	init_options: (repo_path, req) -> {}
 	git_project_root: null
 	git_executable: which "git"
-
+	hooks_socket: helpers.socket()
+	pre_receive: null
+	post_receive: null
 
 pkt_line = (line) ->
 	unless line instanceof Buffer
@@ -30,8 +34,17 @@ module.exports = (options={}) ->
 
 	opt = assign {}, defaults, options
 
-	GIT_PROJECT_ROOT = "#{opt.git_project_root or ''}"
+	GIT_PROJECT_ROOT = "#{opt.git_project_root}"
 	GIT_EXEC = opt.git_executable
+	GIT_HOOK_SOCKET = opt.hooks_socket
+
+	hooks = require("./hook-server") GIT_HOOK_SOCKET
+
+	hook = require.resolve './hook'
+	EXPRESS_GIT_HOOK = [hook]
+	if ".coffee" is path.extname hook
+		EXPRESS_GIT_HOOK.unshift require.resolve "coffee-script/register"
+	EXPRESS_GIT_HOOK = EXPRESS_GIT_HOOK.join path.delimiter
 
 	git_http_backend = express()
 	git_http_backend.disable "etag"
@@ -42,7 +55,7 @@ module.exports = (options={}) ->
 			'Expires': (new Date '1900').toISOString()
 			'Cache-Control': 'no-cache, max-age=0, must-revalidate'
 		next()
-	
+
 	authorize = (service, params, req) ->
 		if typeof opt.authorize is "function"
 			Promise.resolve opt.authorize service, params, req
@@ -59,35 +72,55 @@ module.exports = (options={}) ->
 			# searching in it's parents for .git dirs
 			ceilings: [GIT_PROJECT_ROOT]
 		.catch (err) ->
+			console.error err
 			if opt.auto_init and not test "-e", git_dir
 				authorize "init", {repo_path}, req
 				.then -> ezgit.Repository.init git_dir, init_options repo_path, req
 			else
 				null
-		.catch (err) -> null
+		.catch (err) ->
+			console.error err
+			null
 		.then (repo) ->
 			unless repo?
 				throw new NotFoundError "Repository #{repo_path} not found"
 			repo
 
 	init_options = (repo_path, req) ->
-		unless opt.auto_init
-			return null
-		if typeof opt.init_options is "function"
-			opt.init_options repo_path, req
-		else
-			opt.init_options or {}
+		template = path.resolve __dirname, '..', 'templates/'
+		description = """
+			#{repo_path}
+			============
+
+			This repository was created on #{new Date()} by express-git.
+			"""
+		result =
+			if typeof opt.init_options is "function"
+			then opt.init_options repo_path, req
+			else opt.init_options or {}
+		assign {template, description}, result
 
 	git_http_backend.post /^\/(.*)\.git\/git-(receive-pack|upload-pack)$/, (req, res, next) ->
 		Promise.join req.params[0], req.params[1], (repo_path, service) ->
 			authorize service, {repo_path}, req
-			.then -> open_repo repo_path, req
-			.then (repo) ->
-				res.set 'Content-Type', "application/x-git-#{service}-result"
+			.then -> Promise.join (open_repo repo_path, req), hooks, (repo, hooks) ->
 				new Promise (resolve, reject) ->
 					args = [service, '--stateless-rpc', repo.path]
-					git = spawn GIT_EXEC, args
-					req.pipe git.stdin
+					env = {}
+					if service is "receive-pack"
+						GIT_HOOK_ID = uuid.v4()
+						env = {EXPRESS_GIT_HOOK, GIT_HOOK_SOCKET, GIT_HOOK_ID}
+
+						if typeof opt.pre_receive is "function"
+							# Respond only after pre-receive hook
+							hooks.once "#{GIT_HOOK_ID}:pre-receive", (changes, callback) ->
+								opt.pre_receive req, res, callback, {changes, repo_path}
+						if typeof opt.post_receive is "function"
+							hooks.once "#{GIT_HOOK_ID}:post-receive", (changes, callback) ->
+								opt.post_receive req, res, callback, {changes, repo_path}
+
+					git = spawn GIT_EXEC, args, {env}
+					res.set 'Content-Type', "application/x-git-#{service}-result"
 					git.stdout.pipe res
 					git.stderr.pipe process.stderr
 					git.on "exit", (code) ->
@@ -95,6 +128,10 @@ module.exports = (options={}) ->
 							resolve()
 						else
 							reject new ServerError "Exit code #{code} returned from #{service}"
+
+					# GO git 'em!
+					req.pipe git.stdin
+
 			.then -> next()
 		.catch UnhandledError, (err) -> new ServerError err.message
 		.catch next

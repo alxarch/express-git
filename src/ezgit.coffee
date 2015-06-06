@@ -152,6 +152,7 @@ class Repository
 			result.flags |= INIT_FLAG.BARE
 		if opt.template
 			result.flags |= INIT_FLAG.EXTERNAL_TEMPLATE
+			result.templatePath = opt.template
 		if opt.mkdirp or opt.mkdir
 			result.flags |= INIT_FLAG.MKDIR
 		if opt.mkdirp

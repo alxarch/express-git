@@ -1,0 +1,14 @@
+#!/usr/bin/env node
+(function (hook) {
+	if (!hook) return;
+	try {
+		hook
+		.split(require("path").delimiter)
+		.map(require)
+		.pop()
+		.call(null, "post-receive");
+	}
+	catch (err) {
+		process.exit(1);
+	}
+})(process.env.EXPRESS_GIT_HOOK);
