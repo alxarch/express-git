@@ -10,7 +10,7 @@ class GitObjectReadStream extends Transform
 	constructor: ->
 		super
 		stream = @
-		@promise = new Promise (resolve, reject) ->
+		@promise = new Promise (resolve, reject) =>
 			@on "error", reject
 			@on "ready", (type, size) ->
 				stream.removeListener "error", reject
@@ -210,8 +210,9 @@ class Repository
 		@getReference options
 		.then (ref) => g.Commit.lookup @_repo, ref.target()
 		.then (commit) -> commit.getEntry path
-		.then (entry) => g.Object.lookup @_repo, entry.sha()
-		.then (obj) => GitObject.wrap obj
+		.then (entry) =>
+			g.Object.lookup @_repo, g.Oid.fromString(entry.sha()), g.Object.TYPE.ANY
+		.then (obj) -> GitObject.wrap obj
 
 	createReadStream: (oid) ->
 		Promise.resolve path.join @_repo.path(0), "objects", oid[0..1], oid[2..]
@@ -232,8 +233,6 @@ class Repository
 					data = obj.data()
 					size = data.length
 					stream.end data
-					obj.free()
-					odb.free()
 					{stream, type, size}
 
 module.exports = ezgit = {

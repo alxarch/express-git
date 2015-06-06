@@ -1,4 +1,4 @@
-assign = require "object-assign"
+{assign, freeze, socket, pkt_line} = require "./helpers"
 mime = require "mime-types"
 Promise = require "bluebird"
 
@@ -6,10 +6,9 @@ Promise = require "bluebird"
 exec = Promise.promisify exec
 {ln, mkdir, which, test} = require "shelljs"
 express = require "express"
-path = require "path"
+_path = require "path"
 ezgit = require "./ezgit"
 uuid = require "uuid"
-helpers = require "./helpers"
 
 defaults =
 	auto_init: yes
@@ -18,45 +17,42 @@ defaults =
 	init_options: null
 	git_project_root: null
 	git_executable: which "git"
-	hooks_socket: helpers.socket()
+	hooks_socket: socket()
 	pre_receive: null
 	post_receive: null
-
-pkt_line = (line) ->
-	unless line instanceof Buffer
-		line = new Buffer "#{line}"
-	prefix = new Buffer "0000#{line.length.toString 16}".substr -4, 4
-	Buffer.concat [prefix, line]
 
 UnhandledError = (err) -> not (err.statusCode or null)?
 
 module.exports = (options={}) ->
 
-	opt = assign {}, defaults, options
+	options = assign {}, defaults, options
 
-	GIT_PROJECT_ROOT = "#{opt.git_project_root}"
-	GIT_EXEC = opt.git_executable
-	GIT_HOOK_SOCKET = opt.hooks_socket
+	GIT_PROJECT_ROOT = "#{options.git_project_root}"
+	GIT_EXEC = options.git_executable
+	GIT_HOOK_SOCKET = options.hooks_socket
 
 	hooks = require("./hook-server") GIT_HOOK_SOCKET
 
 	hook = require.resolve './hook'
 	EXPRESS_GIT_HOOK = [hook]
-	if ".coffee" is path.extname hook
+	if ".coffee" is _path.extname hook
 		EXPRESS_GIT_HOOK.unshift require.resolve "coffee-script/register"
-	EXPRESS_GIT_HOOK = EXPRESS_GIT_HOOK.join path.delimiter
+	EXPRESS_GIT_HOOK = EXPRESS_GIT_HOOK.join _path.delimiter
 
 	git_http_backend = express()
 	git_http_backend.disable "etag"
+
 
 	git_http_backend.use (req, res, next) ->
 		res.set
 			'Pragma': 'no-cache'
 			'Expires': (new Date '1900').toISOString()
 			'Cache-Control': 'no-cache, max-age=0, must-revalidate'
+		req.git = freeze project_root: GIT_PROJECT_ROOT
 		next()
 
-	authorize = (req, res, params) ->
+
+	authorize = (req, res) ->
 		new Promise (resolve ,reject) ->
 			callback = (err) -> 
 				if err
@@ -64,13 +60,14 @@ module.exports = (options={}) ->
 				else
 					resolve()
 
-			if typeof opt.authorize is "function"
-				opt.authorize req, res, callback, params
+			if typeof options.authorize is "function"
+				options.authorize req, res, callback
 			else
 				callback()
 
-	open_repo = (req, res, repo_path, init) ->
-		git_dir = path.join GIT_PROJECT_ROOT, repo_path
+	open_repo = (req, res, init=null) ->
+		init ?= options.auto_init
+		git_dir = _path.join GIT_PROJECT_ROOT, req.git.reponame
 		ezgit.Repository.open git_dir,
 			bare: yes
 			# Set the topmost dir to GIT_PROJECT_ROOT to avoid
@@ -78,58 +75,70 @@ module.exports = (options={}) ->
 			ceilings: [GIT_PROJECT_ROOT]
 		.catch (err) ->
 			if init and not test "-e", git_dir
-				authorize req, res,
-					service: "init"
-					repo_path: "repo_path"
+				restore = req.git
+				# Temporarily override req.git.service
+				req.git = freeze req.git, service: "init"
+				authorize req, res
 				.then ->
-					init_options repo_path, req
-				.then (initopt) ->
-					ezgit.Repository.init git_dir, initopt
+					req.git = restore
+					init_options req
+				.then (options) ->
+					ezgit.Repository.init git_dir, options
 			else
 				null
 		.catch (err) ->
 			null
 		.then (repo) ->
 			unless repo?
-				throw new NotFoundError "Repository #{repo_path} not found"
+				throw new NotFoundError "Repository #{req.git.reponame} not found"
 			repo
 
-	init_options = (repo_path, req) ->
-		template = path.resolve __dirname, '..', 'templates/'
+	init_options = (req) ->
+		template = _path.resolve __dirname, '..', 'templates/'
 		description = """
-			#{repo_path}
+			#{req.git.reponame}
 			============
 
 			This repository was created on #{new Date()} by express-git.
 			"""
 
-		p = new Promise (resolve) ->
-			if typeof opt.init_options is "function"
-				resolve opt.init_options repo_path, req
-			else
-				resolve opt.init_options or {}
+		p = Promise.resolve do ->
+			{init_options} = options
+			switch typeof init_options
+				when "function"
+					init_options req
+				when "object"
+					init_options
+				else
+					{}
 		p.then (options) ->
 			assign {template, description}, options
 
 	git_http_backend.post /^\/(.*)\.git\/git-(receive-pack|upload-pack)$/, (req, res, next) ->
-		[repo_path, service] = req.params
-		authorize req, res, {service, repo_path}
+		[reponame, service] = req.params
+		req.git = freeze req.git, {reponame, service}
+
+		authorize req, res
 		.then ->
-			repo = open_repo req, res, repo_path, opt.auto_init
+			repo = open_repo req, res
 			Promise.join repo, hooks, (repo, hooks) ->
 				args = [service, '--stateless-rpc', repo.path]
 				env = {}
 				if service is "receive-pack"
 					GIT_HOOK_ID = uuid.v4()
 					env = {EXPRESS_GIT_HOOK, GIT_HOOK_SOCKET, GIT_HOOK_ID}
+					{post_receive, pre_receive} = options
 
-					if typeof opt.pre_receive is "function"
+					if typeof pre_receive is "function"
 						# Respond only after pre-receive hook
 						hooks.once "#{GIT_HOOK_ID}:pre-receive", (changes, callback) ->
-							opt.pre_receive req, res, callback, {changes, repo_path}
-					if typeof opt.post_receive is "function"
+							req.git = freeze req.git, {changes}
+							pre_receive req, res, callback
+
+					if typeof post_receive is "function"
 						hooks.once "#{GIT_HOOK_ID}:post-receive", (changes, callback) ->
-							opt.post_receive req, res, callback, {changes, repo_path}
+							req.git = freeze req.git, {changes}
+							post_receive req, res, callback
 
 				new Promise (resolve, reject) ->
 					git = spawn GIT_EXEC, args, {env}
@@ -153,12 +162,13 @@ module.exports = (options={}) ->
 
 	git_http_backend.get /\/(.*)\.git\/info\/refs/, (req, res, next) ->
 
-		Promise.join req.query.service, req.params[0], (service, repo_path) ->
+		Promise.join req.query.service, req.params[0], (service, reponame) ->
 			unless service in ["git-upload-pack", "git-receive-pack"]
 				throw new BadRequestError "Invalid service #{service}"
 			service = service.replace /^git-/, ''
-			authorize req, res, {service, repo_path}
-			.then -> open_repo req, res, repo_path, opt.auto_init
+			req.git = freeze req.git, {service, reponame}
+			authorize req, res
+			.then -> open_repo req, res
 			.then (repo) ->
 				res.set 'Content-Type', "application/x-git-#{service}-advertisement"
 				exec "#{GIT_EXEC} #{service} --stateless-rpc --advertise-refs #{repo.path}"
@@ -174,12 +184,13 @@ module.exports = (options={}) ->
 		.catch next
 
 	serve_static = (req, res, next) ->
-		[repo_path, refname, path] = req.params
-		refname ?= "HEAD"
+		[reponame, ref, path] = req.params
 		service = "raw"
-		authorize req, res, {refname, repo_path, path, service}
-		.then -> open_repo req, res, repo_path, no
-		.then (repo) -> repo.find path, ref: refname
+		ref ?= "HEAD"
+		req.git = freeze req.git, {reponame, ref, path, service}
+		authorize req, res
+		.then -> open_repo req, res, no
+		.then (repo) -> repo.findByPath path, {ref}
 		.then (object) ->
 			unless object.type is "blob"
 				throw new BadRequestError "Path doesn't lead to a BLOB"
@@ -190,7 +201,7 @@ module.exports = (options={}) ->
 			stream.pipe res
 		.catch next
 
-	if opt.serve_static
+	if options.serve_static
 		git_http_backend.get ///
 			^/
 			(.*)\.git        # Repo path MUST end with .git
