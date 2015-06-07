@@ -6,6 +6,7 @@ Promise = require "bluebird"
 
 module.exports =
 	assign: assign
+	a2o: (arr) -> (-> arguments) arr...
 	pkt_line: (line) ->
 		unless line instanceof Buffer
 			line = new Buffer "#{line}"

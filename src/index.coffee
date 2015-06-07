@@ -1,4 +1,4 @@
-{spawn, exec, assign, freeze, socket, pkt_line} = require "./helpers"
+{a2o, spawn, exec, assign, freeze, socket, pkt_line} = require "./helpers"
 mime = require "mime-types"
 Promise = require "bluebird"
 
@@ -10,6 +10,7 @@ uuid = require "uuid"
 
 defaults =
 	auto_init: yes
+	pattern: /.*/
 	serve_static: yes
 	authorize: null
 	init_options: null
@@ -52,6 +53,12 @@ module.exports = (options={}) ->
 			'Cache-Control': 'no-cache, max-age=0, must-revalidate'
 		req.git = freeze project_root: GIT_PROJECT_ROOT
 		next()
+	
+	repomatch = (req) ->
+		m = "#{req.git.reponame}".match options.pattern
+		unless m?
+			throw new NotFoundError "Repository not found"
+		req.git = freeze req.git, repoargs: freeze a2o m[1..]
 
 	authorize =
 		if typeof options.authorize is "function" 
@@ -115,6 +122,7 @@ module.exports = (options={}) ->
 	git_http_backend.post /^\/(.*)\.git\/git-(receive-pack|upload-pack)$/, (req, res, next) ->
 		[reponame, service] = req.params
 		req.git = freeze req.git, {reponame, service}
+		repomatch req
 		res.set 'Content-Type', "application/x-git-#{service}-result"
 
 		authorize req, res
@@ -152,6 +160,7 @@ module.exports = (options={}) ->
 				throw new BadRequestError "Invalid service #{service}"
 			service = service.replace /^git-/, ''
 			req.git = freeze req.git, {service, reponame}
+			repomatch req
 			authorize req, res
 			.then -> open_repo req, res
 			.then (repo) ->
@@ -178,6 +187,7 @@ module.exports = (options={}) ->
 		service = "raw"
 		ref ?= "HEAD"
 		req.git = freeze req.git, {reponame, ref, path, service}
+		repomatch req
 		authorize req, res
 		.then -> open_repo req, res, no
 		.then (repo) -> repo.findByPath path, {ref}

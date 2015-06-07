@@ -143,6 +143,14 @@ See [Hooks](#Hooks)
 A middleware-like `(req, res, next)` pre-receive hook callback.
 See [Hooks](#Hooks)
 
+### options.pattern
+
+> default: `/.*/`
+
+All repo names must match this pattern.
+
+Any captured groups will be passed on to a `req.git.repoargs` object
+
 ### options.init_options
 
 To manage the init option for the auto created repos you can use
