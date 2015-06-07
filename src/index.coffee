@@ -1,9 +1,7 @@
-{assign, freeze, socket, pkt_line} = require "./helpers"
+{spawn, exec, assign, freeze, socket, pkt_line} = require "./helpers"
 mime = require "mime-types"
 Promise = require "bluebird"
 
-{spawn, exec} = require "child_process"
-exec = Promise.promisify exec
 {ln, mkdir, which, test} = require "shelljs"
 express = require "express"
 _path = require "path"
@@ -31,10 +29,13 @@ module.exports = (options={}) ->
 	GIT_EXEC = options.git_executable
 	GIT_HOOK_SOCKET = options.hooks_socket
 
+	# Initialize the hooks server
 	hooks = require("./hook-server") GIT_HOOK_SOCKET
 
+	# Setup the EXPRESS_GIT_HOOK env var passed to hook scripts
 	hook = require.resolve './hook'
 	EXPRESS_GIT_HOOK = [hook]
+	# Allow ".coffee" extensions for development
 	if ".coffee" is _path.extname hook
 		EXPRESS_GIT_HOOK.unshift require.resolve "coffee-script/register"
 	EXPRESS_GIT_HOOK = EXPRESS_GIT_HOOK.join _path.delimiter
@@ -43,6 +44,7 @@ module.exports = (options={}) ->
 	git_http_backend.disable "etag"
 
 
+	# Middleware prologue: setup cache headers and req.git object
 	git_http_backend.use (req, res, next) ->
 		res.set
 			'Pragma': 'no-cache'
@@ -51,22 +53,16 @@ module.exports = (options={}) ->
 		req.git = freeze project_root: GIT_PROJECT_ROOT
 		next()
 
+	authorize =
+		if typeof options.authorize is "function" 
+		then -> Promise.resolve()
+		else
+			Promise.promisify options.authorize
+			.catch (err) ->
+				msg = err?.message or err or "Not Authorized"
+				throw new UnauthorizedError "#{msg}"
 
-	authorize = (req, res) ->
-		new Promise (resolve ,reject) ->
-			callback = (err) -> 
-				if err
-					reject new UnauthorizedError (err?.message or err or "Not Authorized")
-				else
-					resolve()
-
-			if typeof options.authorize is "function"
-				options.authorize req, res, callback
-			else
-				callback()
-
-	open_repo = (req, res, init=null) ->
-		init ?= options.auto_init
+	open_repo = (req, res, init=options.auto_init) ->
 		git_dir = _path.join GIT_PROJECT_ROOT, req.git.reponame
 		ezgit.Repository.open git_dir,
 			bare: yes
@@ -75,8 +71,8 @@ module.exports = (options={}) ->
 			ceilings: [GIT_PROJECT_ROOT]
 		.catch (err) ->
 			if init and not test "-e", git_dir
-				restore = req.git
 				# Temporarily override req.git.service
+				restore = req.git
 				req.git = freeze req.git, service: "init"
 				authorize req, res
 				.then ->
@@ -114,15 +110,17 @@ module.exports = (options={}) ->
 		p.then (options) ->
 			assign {template, description}, options
 
+	# Main push/pull services
+	# via git receive-pack/upload-pack commands
 	git_http_backend.post /^\/(.*)\.git\/git-(receive-pack|upload-pack)$/, (req, res, next) ->
 		[reponame, service] = req.params
 		req.git = freeze req.git, {reponame, service}
+		res.set 'Content-Type', "application/x-git-#{service}-result"
 
 		authorize req, res
 		.then ->
 			repo = open_repo req, res
 			Promise.join repo, hooks, (repo, hooks) ->
-				args = [service, '--stateless-rpc', repo.path]
 				env = {}
 				if service is "receive-pack"
 					GIT_HOOK_ID = uuid.v4()
@@ -140,26 +138,13 @@ module.exports = (options={}) ->
 							req.git = freeze req.git, {changes}
 							post_receive req, res, callback
 
-				new Promise (resolve, reject) ->
-					git = spawn GIT_EXEC, args, {env}
-					res.set 'Content-Type', "application/x-git-#{service}-result"
-					git.stdout.pipe res
-					git.stderr.pipe process.stderr
-					git.on "exit", (code) ->
-						if code is 0
-							resolve()
-						else
-							reject new ServerError "Exit code #{code} returned from #{service}"
-
-					# GO git 'em!
-					req.pipe git.stdin
-
-		.then -> next()
-		.catch UnhandledError, (err) ->
-			console.error err.stack
-			new ServerError err.message
+				args = [service, '--stateless-rpc', repo.path]
+				stdio = [req, res, 'pipe']
+				spawn GIT_EXEC, args, {env, stdio}
 		.catch next
 
+	# Ref advertisement for push/pull operations
+	# via git receive-pack/upload-pack commands
 	git_http_backend.get /\/(.*)\.git\/info\/refs/, (req, res, next) ->
 
 		Promise.join req.query.service, req.params[0], (service, reponame) ->
@@ -171,17 +156,22 @@ module.exports = (options={}) ->
 			.then -> open_repo req, res
 			.then (repo) ->
 				res.set 'Content-Type', "application/x-git-#{service}-advertisement"
-				exec "#{GIT_EXEC} #{service} --stateless-rpc --advertise-refs #{repo.path}"
-			.spread (stdout, stderr) ->
 				res.write pkt_line "# service=git-#{service}\n0000"
-				res.write stdout
-				process.stderr.write stderr
-				res.end()
-				next()
-		.catch UnhandledError, (err) ->
-			console.error err.stack
-			throw new ServerError err.message
+				args = [service, '--stateless-rpc', '--advertise-refs', repo.path]
+				stdio = ['ignore', res, 'pipe']
+				spawn GIT_EXEC, args, {stdio}
 		.catch next
+
+	# Direct access to blobs in repos
+	serve_static_pattern = ///
+		^/
+		(.*)\.git        # Repo path MUST end with .git
+		(?:/(refs/.*))?  # ref name is optional (default: HEAD)
+						 # Having it in path allows relative paths
+		/~raw/           # We need ~ to mark the end of a valid ref name
+		(.*)             # Rest of the path is used to resolve a file in workdir
+		$
+		///
 
 	serve_static = (req, res, next) ->
 		[reponame, ref, path] = req.params
@@ -202,15 +192,7 @@ module.exports = (options={}) ->
 		.catch next
 
 	if options.serve_static
-		git_http_backend.get ///
-			^/
-			(.*)\.git        # Repo path MUST end with .git
-			(?:/(refs/.*))?  # ref name is optional (default: HEAD)
-							 # Having it in path allows relative paths
-			/~raw/           # We need ~ to mark the end of a valid ref name
-			(.*)             # Rest of the path is used to resolve a file in workdir
-			$
-			///, serve_static
+		git_http_backend.get serve_static_pattern, serve_static
 
 	git_http_backend.use (err, req, res, next) ->
 		if err.statusCode
