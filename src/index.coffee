@@ -188,7 +188,7 @@ module.exports = (options={}) ->
 	serve_static = (req, res, next) ->
 		[reponame, rev, path] = req.params
 
-		service = "raw"
+		service = "blob"
 		rev ?= "HEAD"
 		req.git = freeze req.git, {reponame, path, service}
 		repomatch req
