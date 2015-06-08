@@ -5,7 +5,7 @@ Promise = require "bluebird"
 {ln, mkdir, which, test} = require "shelljs"
 express = require "express"
 _path = require "path"
-ezgit = require "./ezgit"
+g = require "ezgit"
 uuid = require "uuid"
 
 defaults =
@@ -71,7 +71,7 @@ module.exports = (options={}) ->
 
 	open_repo = (req, res, init=options.auto_init) ->
 		git_dir = _path.join GIT_PROJECT_ROOT, req.git.reponame
-		ezgit.Repository.open git_dir,
+		g.Repository.open git_dir,
 			bare: yes
 			# Set the topmost dir to GIT_PROJECT_ROOT to avoid
 			# searching in it's parents for .git dirs
@@ -86,7 +86,7 @@ module.exports = (options={}) ->
 					req.git = restore
 					init_options req
 				.then (options) ->
-					ezgit.Repository.init git_dir, options
+					g.Repository.init git_dir, options
 			else
 				null
 		.catch (err) ->
@@ -146,7 +146,7 @@ module.exports = (options={}) ->
 							req.git = freeze req.git, {changes}
 							post_receive req, res, callback
 
-				args = [service, '--stateless-rpc', repo.path]
+				args = [service, '--stateless-rpc', repo.path()]
 				stdio = [req, res, 'pipe']
 				spawn GIT_EXEC, args, {env, stdio}
 		.catch next
@@ -166,7 +166,7 @@ module.exports = (options={}) ->
 			.then (repo) ->
 				res.set 'Content-Type', "application/x-git-#{service}-advertisement"
 				res.write pkt_line "# service=git-#{service}\n0000"
-				args = [service, '--stateless-rpc', '--advertise-refs', repo.path]
+				args = [service, '--stateless-rpc', '--advertise-refs', repo.path()]
 				stdio = ['ignore', res, 'pipe']
 				spawn GIT_EXEC, args, {stdio}
 		.catch next
@@ -190,11 +190,12 @@ module.exports = (options={}) ->
 		repomatch req
 		authorize req, res
 		.then -> open_repo req, res, no
-		.then (repo) -> repo.findByPath path, {ref}
-		.then (object) ->
-			unless object.type is "blob"
-				throw new BadRequestError "Path doesn't lead to a BLOB"
-			object.getReadStream()
+		.then (repo) ->
+			repo.findByPath path, {ref}
+			.then (object) ->
+				unless object.type() is g.Object.TYPE.BLOB
+					throw new BadRequestError "Path doesn't lead to a BLOB"
+				repo.createReadStream object
 		.then ({stream, size}) ->
 			res.set "Content-Type", mime.lookup(path) or "application/octet-stream"
 			res.set "Content-Length", size
