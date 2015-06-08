@@ -44,16 +44,19 @@ module.exports = (options={}) ->
 	git_http_backend = express()
 	git_http_backend.disable "etag"
 
-
-	# Middleware prologue: setup cache headers and req.git object
-	git_http_backend.use (req, res, next) ->
+	no_cache = (req, res, next) ->
 		res.set
 			'Pragma': 'no-cache'
 			'Expires': (new Date '1900').toISOString()
 			'Cache-Control': 'no-cache, max-age=0, must-revalidate'
+		next()
+
+	# Middleware prologue: setup cache headers and req.git object
+	git_http_backend.use (req, res, next) ->
+
 		req.git = freeze project_root: GIT_PROJECT_ROOT
 		next()
-	
+
 	repomatch = (req) ->
 		m = "#{req.git.reponame}".match options.pattern
 		unless m?
@@ -61,7 +64,7 @@ module.exports = (options={}) ->
 		req.git = freeze req.git, repoargs: freeze a2o m[1..]
 
 	authorize =
-		if typeof options.authorize is "function" 
+		if typeof options.authorize is "function"
 		then -> Promise.resolve()
 		else
 			Promise.promisify options.authorize
@@ -119,7 +122,7 @@ module.exports = (options={}) ->
 
 	# Main push/pull services
 	# via git receive-pack/upload-pack commands
-	git_http_backend.post /^\/(.*)\.git\/git-(receive-pack|upload-pack)$/, (req, res, next) ->
+	git_http_backend.post /^\/(.*)\.git\/git-(receive-pack|upload-pack)$/, no_cache, (req, res, next) ->
 		[reponame, service] = req.params
 		req.git = freeze req.git, {reponame, service}
 		repomatch req
@@ -153,7 +156,7 @@ module.exports = (options={}) ->
 
 	# Ref advertisement for push/pull operations
 	# via git receive-pack/upload-pack commands
-	git_http_backend.get /\/(.*)\.git\/info\/refs/, (req, res, next) ->
+	git_http_backend.get /\/(.*)\.git\/info\/refs/, no_cache, (req, res, next) ->
 
 		Promise.join req.query.service, req.params[0], (service, reponame) ->
 			unless service in ["git-upload-pack", "git-receive-pack"]
@@ -184,6 +187,7 @@ module.exports = (options={}) ->
 
 	serve_static = (req, res, next) ->
 		[reponame, rev, path] = req.params
+
 		service = "raw"
 		rev ?= "HEAD"
 		req.git = freeze req.git, {reponame, path, service}
@@ -191,20 +195,28 @@ module.exports = (options={}) ->
 		authorize req, res
 		.then -> open_repo req, res, no
 		.then (repo) ->
-			repo.find
-				rev: rev
-				path: path
+			repo.find {rev, path}
 			.catch (err) ->
-				console.error err.stack
+				# console.error err.stack
 				throw new NotFoundError "Blob not found"
 			.then (object) ->
+
 				unless object.type() is g.Object.TYPE.BLOB
 					throw new NotFoundError "Blob not found"
-				repo.createReadStream object
-		.then ({stream, size}) ->
-			res.set "Content-Type", mime.lookup(path) or "application/octet-stream"
-			res.set "Content-Length", size
-			stream.pipe res
+
+				etag = "#{object.id()}"
+
+				if etag is req.headers['if-none-match']
+					res.status 304
+					res.end()
+				else
+					repo.createReadStream object
+					.then ({stream, size}) ->
+						res.set "Etag", "#{etag}"
+						res.set "Content-Type", mime.lookup(path) or "application/octet-stream"
+						res.set "Content-Length", size
+						stream.pipe res
+
 		.catch next
 
 	if options.serve_static
