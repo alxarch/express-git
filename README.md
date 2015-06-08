@@ -50,7 +50,7 @@ The service name for this request
 
 Possible service names are:
 
- - `raw` for raw file requests (if `options.serve_static` is enabled)
+ - `blob` for raw file requests (if `options.serve_static` is enabled)
  - `receive-pack` for push requests
  - `upload-pack` for fetch requests
  - `init` for creating a non-existing repo (if `options.auto_init` is enabled)
@@ -111,9 +111,9 @@ The base dir for repositories.
 
 Serve files from git repos.
 
-You can access all files at `/path/to/repo.git/~raw/path/to/file`.
+You can access all files at `/path/to/repo.git/path/to/file`.
 To access a file in a ref other than HEAD use
-`/path/to/repo.git/refs/heads/foo/~raw/path/to/file`.
+`/path/to/repo.git/blob/refspec:path/to/file`.
 
 ### options.auto_init
 
