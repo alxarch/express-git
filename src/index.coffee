@@ -174,27 +174,32 @@ module.exports = (options={}) ->
 	# Direct access to blobs in repos
 	serve_static_pattern = ///
 		^/
-		(.*)\.git        # Repo path MUST end with .git
-		(?:/(refs/.*))?  # ref name is optional (default: HEAD)
-						 # Having it in path allows relative paths
-		/~raw/           # We need ~ to mark the end of a valid ref name
-		(.*)             # Rest of the path is used to resolve a file in workdir
+		(.*)\.git  # Repo path MUST end with .git
+		/blob/
+		(?:(.*):)?  # commit-ish (default: HEAD) ends with :
+	   			    # Having it in path allows relative path resolutions
+		(.*)        # Rest of the path is used to resolve a file in workdir
 		$
 		///
 
 	serve_static = (req, res, next) ->
-		[reponame, ref, path] = req.params
+		[reponame, rev, path] = req.params
 		service = "raw"
-		ref ?= "HEAD"
-		req.git = freeze req.git, {reponame, ref, path, service}
+		rev ?= "HEAD"
+		req.git = freeze req.git, {reponame, path, service}
 		repomatch req
 		authorize req, res
 		.then -> open_repo req, res, no
 		.then (repo) ->
-			repo.findByPath path, {ref}
+			repo.find
+				rev: rev
+				path: path
+			.catch (err) ->
+				console.error err.stack
+				throw new NotFoundError "Blob not found"
 			.then (object) ->
 				unless object.type() is g.Object.TYPE.BLOB
-					throw new BadRequestError "Path doesn't lead to a BLOB"
+					throw new NotFoundError "Blob not found"
 				repo.createReadStream object
 		.then ({stream, size}) ->
 			res.set "Content-Type", mime.lookup(path) or "application/octet-stream"

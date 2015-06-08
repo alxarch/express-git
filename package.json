@@ -20,7 +20,7 @@
     "bluebird": "^2.9.27",
     "coffee-script": "^1.9.3",
     "express": "^4.12.4",
-    "ezgit": "^0.0.3",
+    "ezgit": "^0.0.4",
     "mime-types": "^2.0.13",
     "object-assign": "^2.0.0",
     "shelljs": "^0.5.0",
