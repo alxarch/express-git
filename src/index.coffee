@@ -1,8 +1,9 @@
 {a2o, spawn, exec, assign, freeze, socket, pkt_line} = require "./helpers"
+{NotFoundError, BadRequestError, UnauthorizedError} = require "./errors"
 mime = require "mime-types"
 Promise = require "bluebird"
 
-{ln, mkdir, which, test} = require "shelljs"
+{mkdir, which, test} = require "shelljs"
 express = require "express"
 _path = require "path"
 g = require "ezgit"
@@ -22,7 +23,7 @@ defaults =
 	post_receive: null
 	max_age: 365 * 24 * 60 * 60
 
-UnhandledError = (err) -> not (err.statusCode or null)?
+UnhandledError = (err) -> not (err.status or null)?
 
 module.exports = (options={}) ->
 
@@ -225,25 +226,5 @@ module.exports = (options={}) ->
 	if options.serve_static
 		git_http_backend.get serve_static_pattern, serve_static
 
-	git_http_backend.use (err, req, res, next) ->
-		if err.statusCode
-			res.status err.statusCode
-			res.set "Content-Type", "text/plain"
-			res.send err.message
-			res.end()
-		else
-			next err
-
 	git_http_backend
 
-class ServerError extends Error
-	constructor: (@message, @statusCode=500) -> super
-
-class NotFoundError extends Error
-	constructor: (@message, @statusCode=404) -> super
-
-class BadRequestError extends Error
-	constructor: (@message, @statusCode=400) -> super
-
-class UnauthorizedError extends Error
-	constructor: (@message, @statusCode=401) -> super
