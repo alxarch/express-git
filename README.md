@@ -55,9 +55,9 @@ Possible service names are:
  - `upload-pack` for fetch requests
  - `init` for creating a non-existing repo (if `options.auto_init` is enabled)
 
-### `req.git.ref`
+### `req.git.rev`
 
-The reference name for this request
+The git [revision][revisions] for this request
 
 ### `req.git.path`
 
@@ -88,14 +88,14 @@ of those callbacks to control the hook exit code.
 
 #### pre-receive
 
-Changes can be found under `req.git.changes` and is an array
-of the form `[{before, after, ref}]`. Passing an error
+Changes can be found under `req.git.changes` and is an `Array`
+of `{before, after, ref}` objects. Passing an error
 to the `next` callback will abort the request.
 
 #### post-receive
 
-Changes can be found under `req.git.changes` and is an array
-of the form `[{before, after, ref}]`
+Changes can be found under `req.git.changes` and is an `Array`
+of `{before, after, ref}` objects.
 
 See [Server-Side Hooks][ServerSideHooks] for more info.
 
@@ -150,6 +150,7 @@ See [Hooks](#Hooks)
 All repo names must match this pattern.
 
 Any captured groups will be passed on to a `req.git.repoargs` object
+for use in `options.authorize` and `options.init_options` callbacks.
 
 ### options.init_options
 
@@ -221,3 +222,4 @@ You can specify the git exectable to use with the `git_exec` option.
 
 [RepoInitOptions]: http://www.nodegit.org/api/repository_init_options/
 [ServerSideHooks]: https://git-scm.com/book/en/v2/Customizing-Git-Git-Hooks#Server-Side-Hooks
+[revisions]: https://git-scm.com/docs/revisions

@@ -6,7 +6,7 @@ Promise = require "bluebird"
 {mkdir, which, test} = require "shelljs"
 express = require "express"
 _path = require "path"
-g = require "ezgit"
+g = require "./ezgit"
 uuid = require "uuid"
 moment = require "moment"
 
@@ -47,62 +47,74 @@ module.exports = (options={}) ->
 	git_http_backend = express()
 	git_http_backend.disable "etag"
 
-	no_cache = (req, res, next) ->
-		res.set
-			'Pragma': 'no-cache'
-			'Expires': (new Date '1900').toISOString()
-			'Cache-Control': 'no-cache, max-age=0, must-revalidate'
-		next()
+	noCache = (req, res, next) ->
+			res.set
+				'Pragma': 'no-cache'
+				'Expires': (new Date '1900').toISOString()
+				'Cache-Control': 'no-cache, max-age=0, must-revalidate'
+			next()
 
 	# Middleware prologue: setup cache headers and req.git object
 	git_http_backend.use (req, res, next) ->
-
 		req.git = freeze project_root: GIT_PROJECT_ROOT
 		next()
 
-	repomatch = (req) ->
+	matchRepo = (req, res, next) ->
 		m = "#{req.git.reponame}".match options.pattern
-		unless m?
-			throw new NotFoundError "Repository not found"
-		req.git = freeze req.git, repoargs: freeze a2o m[1..]
-
-	authorize =
-		if typeof options.authorize is "function"
-		then -> Promise.resolve()
+		if m?
+			req.git = freeze req.git, repoargs: freeze a2o m[1..]
+			next()
 		else
-			Promise.promisify options.authorize
-			.catch (err) ->
-				msg = err?.message or err or "Not Authorized"
-				throw new UnauthorizedError "#{msg}"
+			next new NotFoundError "Repository not found"
 
-	open_repo = (req, res, init=options.auto_init) ->
+	authPromise =
+		if typeof options.auth is "function"
+		then Promise.promisify auth
+		else -> Promise.resolve()
+
+	authorize = (req, res, next) ->
+		authPromise req, res
+		.then -> next()
+		.catch UnhandledError, (err) ->
+			throw new UnauthorizedError err.message or "#{err}"
+		.catch next
+
+	attachRepo = (init) ->
+		(req, res, next) ->
+			(if init then openOrInitRepo else openRepo) req
+			.catch (err) -> null
+			.then (repo) ->
+				unless repo?
+					throw new NotFoundError "Repository #{req.git.reponame} not found"
+				req.git = freeze req.git, {repo}
+				next()
+			.catch next
+
+	openOrInitRepo = (req) ->
+		git_dir = _path.join GIT_PROJECT_ROOT, req.git.reponame
+
+		openRepo req
+		.catch (err) ->
+			if options.auto_init and not test "-e", git_dir
+				# Temporarily override req.git.service
+				restore = req.git
+				req.git = freeze req.git, service: "init"
+				authorize req, res
+				.then -> initOptions req
+				.then (init) -> g.Repository.init git_dir, init
+			else
+				null
+
+
+	openRepo = (req) ->
 		git_dir = _path.join GIT_PROJECT_ROOT, req.git.reponame
 		g.Repository.open git_dir,
 			bare: yes
 			# Set the topmost dir to GIT_PROJECT_ROOT to avoid
 			# searching in it's parents for .git dirs
 			ceilings: [GIT_PROJECT_ROOT]
-		.catch (err) ->
-			if init and not test "-e", git_dir
-				# Temporarily override req.git.service
-				restore = req.git
-				req.git = freeze req.git, service: "init"
-				authorize req, res
-				.then ->
-					req.git = restore
-					init_options req
-				.then (options) ->
-					g.Repository.init git_dir, options
-			else
-				null
-		.catch (err) ->
-			null
-		.then (repo) ->
-			unless repo?
-				throw new NotFoundError "Repository #{req.git.reponame} not found"
-			repo
 
-	init_options = (req) ->
+	initOptions = (req) ->
 		template = _path.resolve __dirname, '..', 'templates/'
 		description = """
 			#{req.git.reponame}
@@ -125,16 +137,20 @@ module.exports = (options={}) ->
 
 	# Main push/pull services
 	# via git receive-pack/upload-pack commands
-	git_http_backend.post /^\/(.*)\.git\/git-(receive-pack|upload-pack)$/, no_cache, (req, res, next) ->
-		[reponame, service] = req.params
-		req.git = freeze req.git, {reponame, service}
-		repomatch req
-		res.set 'Content-Type', "application/x-git-#{service}-result"
+	git_http_backend.post /^\/(.*)\.git\/git-(receive-pack|upload-pack)$/,
+		noCache
+		(req, res, next) ->
+			[reponame, service] = req.params
+			req.git = freeze req.git, {reponame, service}
 
-		authorize req, res
-		.then ->
-			repo = open_repo req, res
-			Promise.join repo, hooks, (repo, hooks) ->
+			next()
+		matchRepo
+		authorize
+		attachRepo options.auto_init
+		(req, res, next) ->
+			{repo, service} = req.git
+			res.set 'Content-Type', "application/x-git-#{service}-result"
+			hooks.then (hooks) ->
 				env = {}
 				if service is "receive-pack"
 					GIT_HOOK_ID = uuid.v4()
@@ -155,28 +171,32 @@ module.exports = (options={}) ->
 				args = [service, '--stateless-rpc', repo.path()]
 				stdio = [req, res, 'pipe']
 				spawn GIT_EXEC, args, {env, stdio}
-		.catch next
+			.then -> repo.free()
+			.catch next
 
 	# Ref advertisement for push/pull operations
 	# via git receive-pack/upload-pack commands
-	git_http_backend.get /\/(.*)\.git\/info\/refs/, no_cache, (req, res, next) ->
-
-		Promise.join req.query.service, req.params[0], (service, reponame) ->
+	git_http_backend.get /\/(.*)\.git\/info\/refs/,
+		noCache
+		(req, res, next) ->
+			reponame = req.params[0]
+			service = req.query.service
 			unless service in ["git-upload-pack", "git-receive-pack"]
 				throw new BadRequestError "Invalid service #{service}"
 			service = service.replace /^git-/, ''
-			req.git = freeze req.git, {service, reponame}
-			repomatch req
-			authorize req, res
-			.then -> open_repo req, res
-			.then (repo) ->
-				res.set 'Content-Type', "application/x-git-#{service}-advertisement"
-				res.write pkt_line "# service=git-#{service}\n0000"
-				args = [service, '--stateless-rpc', '--advertise-refs', repo.path()]
-				stdio = ['ignore', res, 'pipe']
-				spawn GIT_EXEC, args, {stdio}
-		.catch next
-
+			req.git = freeze req.git, {reponame, service}
+			next()
+		matchRepo
+		authorize
+		attachRepo options.auto_init
+		(req, res, next) ->
+			{service, reponame, repo} = req.git
+			res.set 'Content-Type', "application/x-git-#{service}-advertisement"
+			res.write pkt_line "# service=git-#{service}\n0000"
+			args = [service, '--stateless-rpc', '--advertise-refs', repo.path()]
+			stdio = ['ignore', res, 'pipe']
+			spawn GIT_EXEC, args, {stdio}
+			.then -> repo.free()
 	# Direct access to blobs in repos
 	serve_static_pattern = ///
 		^/
@@ -188,43 +208,47 @@ module.exports = (options={}) ->
 		$
 		///
 
-	serve_static = (req, res, next) ->
-		[reponame, rev, path] = req.params
+	serve_static = [
+		(req, res, next) ->
+			[reponame, rev, path] = req.params
 
-		service = "blob"
-		rev ?= "HEAD"
-		req.git = freeze req.git, {reponame, path, service}
-		repomatch req
-		authorize req, res
-		.then -> open_repo req, res, no
-		.then (repo) ->
+			service = "blob"
+			rev ?= "HEAD"
+			req.git = freeze req.git, {reponame, path, service, rev}
+			next()
+		matchRepo
+		authorize
+		attachRepo no
+		(req, res, next) ->
+			{rev, path, repo} = req.git
 			repo.find {rev, path}
 			.catch (err) ->
-				# console.error err.stack
 				throw new NotFoundError "Blob not found"
 			.then (object) ->
 				unless object.type() is g.Object.TYPE.BLOB
 					throw new NotFoundError "Blob not found"
+				id = "#{object.id()}"
 
-				etag = "#{object.id()}"
-
-				if etag is req.headers['if-none-match']
+				if id is req.headers['if-none-match']
 					res.status 304
 					res.end()
 				else
-					{max_age} = options
-					repo.createReadStream object
-					.then ({stream, size}) ->
-						res.set "Etag", "#{etag}"
+					g.Blob.lookup repo, object.id()
+					.then (blob) ->
+						{max_age} = options
+						res.set "Etag", id
 						res.set "Cache-Control", "private, max-age=#{max_age}, no-transform, must-revalidate"
 						res.set "Content-Type", mime.lookup(path) or "application/octet-stream"
-						res.set "Content-Length", size
-						stream.pipe res
-
-		.catch next
+						res.set "Content-Length", blob.rawsize()
+						res.write blob.content()
+						res.end()
+						blob.free()
+						object.free()
+						repo.free()
+			.catch next
+	]
 
 	if options.serve_static
 		git_http_backend.get serve_static_pattern, serve_static
 
 	git_http_backend
-
