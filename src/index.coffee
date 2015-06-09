@@ -7,6 +7,7 @@ express = require "express"
 _path = require "path"
 g = require "ezgit"
 uuid = require "uuid"
+moment = require "moment"
 
 defaults =
 	auto_init: yes
@@ -19,6 +20,7 @@ defaults =
 	hooks_socket: socket()
 	pre_receive: null
 	post_receive: null
+	max_age: 365 * 24 * 60 * 60
 
 UnhandledError = (err) -> not (err.statusCode or null)?
 
@@ -200,7 +202,6 @@ module.exports = (options={}) ->
 				# console.error err.stack
 				throw new NotFoundError "Blob not found"
 			.then (object) ->
-
 				unless object.type() is g.Object.TYPE.BLOB
 					throw new NotFoundError "Blob not found"
 
@@ -210,9 +211,11 @@ module.exports = (options={}) ->
 					res.status 304
 					res.end()
 				else
+					{max_age} = options
 					repo.createReadStream object
 					.then ({stream, size}) ->
 						res.set "Etag", "#{etag}"
+						res.set "Cache-Control", "private, max-age=#{max_age}, no-transform, must-revalidate"
 						res.set "Content-Type", mime.lookup(path) or "application/octet-stream"
 						res.set "Content-Length", size
 						stream.pipe res
