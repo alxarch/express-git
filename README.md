@@ -6,11 +6,11 @@ Usage:
 ```javascript
 
 var express = require("express");
-var git = require("express-git");
+var expressGit = require("express-git");
 var app = express();
-app.use("/git", git({
-	git_project_root: "repos/",
-	auto_init: true
+app.use("/git", expressGit.serve("repos/", {
+	auto_init: true,
+	serve_static: true
 });
 
 app.listen(3000);
@@ -101,10 +101,6 @@ See [Server-Side Hooks][ServerSideHooks] for more info.
 
 ## Options
 
-### options.git_project_root
-
-The base dir for repositories.
-
 ### options.serve_static
 
 > default: true
@@ -135,7 +131,7 @@ See [HTTP Cache Headers](http://www.mobify.com/blog/beginners-guide-to-http-cach
 
 Automatically create non-existing repositories
 
-### options.authorize
+### options.auth
 
 > default: noop
 
@@ -146,16 +142,13 @@ To prevent an action the callback should throw an error that will triger a
 401 error response with the body set to the error's message.
 
 
-### options.pre_receive
+### options.hooks
 
-A middleware-like `(req, res, next)` pre-receive hook callback.
+An object with git hook names as keys and middleware-like 
+`(req, res, next)` hook callbacks as values.
+
 See [Hooks](#hooks)
 
-
-### options.post_receive
-
-A middleware-like `(req, res, next)` pre-receive hook callback.
-See [Hooks](#hooks)
 
 ### options.pattern
 
@@ -164,7 +157,7 @@ See [Hooks](#hooks)
 All repo names must match this pattern.
 
 Any captured groups will be passed on to a `req.git.repoargs` object
-for use in `options.authorize` and `options.init_options` callbacks.
+for use in `options.auth` and `options.init_options` callbacks.
 
 ### options.init_options
 
