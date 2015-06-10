@@ -135,13 +135,13 @@ To prevent an action the callback should throw an error that will triger a
 ### options.pre_receive
 
 A middleware-like `(req, res, next)` pre-receive hook callback.
-See [Hooks](#Hooks)
+See [Hooks](#hooks)
 
 
 ### options.post_receive
 
 A middleware-like `(req, res, next)` pre-receive hook callback.
-See [Hooks](#Hooks)
+See [Hooks](#hooks)
 
 ### options.pattern
 
