@@ -16,7 +16,6 @@ defaults =
 	serve_static: yes
 	authorize: null
 	init_options: null
-	git_project_root: null
 	git_executable: which "git"
 	hooks_socket: socket()
 	pre_receive: null
@@ -25,11 +24,14 @@ defaults =
 
 UnhandledError = (err) -> not (err.status or null)?
 
-module.exports = (options={}) ->
+module.exports = expressGit = {}
+expressGit.git = g
+
+expressGit.serve = (root, options={}) ->
 
 	options = assign {}, defaults, options
 
-	GIT_PROJECT_ROOT = "#{options.git_project_root}"
+	GIT_PROJECT_ROOT = _path.resolve "#{root}"
 	GIT_EXEC = options.git_executable
 	GIT_HOOK_SOCKET = options.hooks_socket
 
@@ -52,6 +54,7 @@ module.exports = (options={}) ->
 	# We implement our own etag.
 	app.disable "etag"
 
+	# Flag a response as uncacheable
 	noCache = (req, res, next) ->
 			res.set
 				'Pragma': 'no-cache'
