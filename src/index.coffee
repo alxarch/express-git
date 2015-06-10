@@ -47,6 +47,8 @@ module.exports = (options={}) ->
 	git_http_backend = express()
 	git_http_backend.disable "etag"
 
+	unless options.pattern instanceof RegExp
+		options.pattern = new RegExp "#{options.pattern}"
 	noCache = (req, res, next) ->
 			res.set
 				'Pragma': 'no-cache'
