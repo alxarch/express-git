@@ -111,7 +111,7 @@ The base dir for repositories.
 
 Serve files from git repos.
 
-You can access all files at `/path/to/repo.git/path/to/file`.
+You can access all files at `/path/to/repo.git/blob/path/to/file`.
 To access a file in a ref other than HEAD use
 `/path/to/repo.git/blob/refspec:path/to/file`.
 
