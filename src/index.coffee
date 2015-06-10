@@ -44,11 +44,14 @@ module.exports = (options={}) ->
 		EXPRESS_GIT_HOOK.unshift require.resolve "coffee-script/register"
 	EXPRESS_GIT_HOOK = EXPRESS_GIT_HOOK.join _path.delimiter
 
-	git_http_backend = express()
-	git_http_backend.disable "etag"
 
 	unless options.pattern instanceof RegExp
 		options.pattern = new RegExp "#{options.pattern}"
+
+	app = express()
+	# We implement our own etag.
+	app.disable "etag"
+
 	noCache = (req, res, next) ->
 			res.set
 				'Pragma': 'no-cache'
@@ -56,8 +59,8 @@ module.exports = (options={}) ->
 				'Cache-Control': 'no-cache, max-age=0, must-revalidate'
 			next()
 
-	# Middleware prologue: setup cache headers and req.git object
-	git_http_backend.use (req, res, next) ->
+	# Middleware prologue: setup the req.git object
+	app.use (req, res, next) ->
 		req.git = freeze project_root: GIT_PROJECT_ROOT
 		next()
 
@@ -139,7 +142,7 @@ module.exports = (options={}) ->
 
 	# Main push/pull services
 	# via git receive-pack/upload-pack commands
-	git_http_backend.post /^\/(.*)\.git\/git-(receive-pack|upload-pack)$/,
+	app.post /^\/(.*)\.git\/git-(receive-pack|upload-pack)$/,
 		noCache
 		(req, res, next) ->
 			[reponame, service] = req.params
@@ -178,7 +181,7 @@ module.exports = (options={}) ->
 
 	# Ref advertisement for push/pull operations
 	# via git receive-pack/upload-pack commands
-	git_http_backend.get /\/(.*)\.git\/info\/refs/,
+	app.get /\/(.*)\.git\/info\/refs/,
 		noCache
 		(req, res, next) ->
 			reponame = req.params[0]
@@ -251,6 +254,6 @@ module.exports = (options={}) ->
 	]
 
 	if options.serve_static
-		git_http_backend.get serve_static_pattern, serve_static
+		app.get serve_static_pattern, serve_static
 
-	git_http_backend
+	app
