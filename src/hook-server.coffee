@@ -32,6 +32,7 @@ module.exports = (socket) ->
 	new Promise (resolve, reject) ->
 		try
 			srv = init()
+			srv.on "error", reject
 			socket = parseInt(socket) or path.resolve "#{socket}"
 			srv.listen socket, -> resolve srv
 		catch err
