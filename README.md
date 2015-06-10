@@ -115,6 +115,20 @@ You can access all files at `/path/to/repo.git/path/to/file`.
 To access a file in a ref other than HEAD use
 `/path/to/repo.git/blob/refspec:path/to/file`.
 
+### options.max_age
+
+> default: 1 year
+
+Cache-Control header's `max-age` parameter for blobs.
+
+The default value of 1 year is to be used in conjuction with `must-revalidate`.
+The blob's id is added as an `Etag` header tho the response. The `must-revalidate`
+is added because the ref of the blob-serving url might point to a different blob
+after a repository modification, forcing the proxy to revalidate the freshness
+on each request.
+
+See [HTTP Cache Headers](http://www.mobify.com/blog/beginners-guide-to-http-cache-headers/) for more info.
+
 ### options.auto_init
 
 > default: true
