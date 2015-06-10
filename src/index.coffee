@@ -16,10 +16,9 @@ defaults =
 	serve_static: yes
 	authorize: null
 	init_options: null
-	git_executable: which "git"
+	git_exec: which "git"
+	hooks: {}
 	hooks_socket: socket()
-	pre_receive: null
-	post_receive: null
 	max_age: 365 * 24 * 60 * 60
 
 UnhandledError = (err) -> not (err.status or null)?
@@ -27,13 +26,21 @@ UnhandledError = (err) -> not (err.status or null)?
 module.exports = expressGit = {}
 expressGit.git = g
 
+# Free up objects at the end of the request
+expressGit.free = ->
+	(req, res, next) ->
+		for obj in req._nodegit_free
+			obj.free()
+		next()
+
 expressGit.serve = (root, options={}) ->
 
 	options = assign {}, defaults, options
 
 	GIT_PROJECT_ROOT = _path.resolve "#{root}"
-	GIT_EXEC = options.git_executable
+	GIT_EXEC = options.git_exec
 	GIT_HOOK_SOCKET = options.hooks_socket
+	console.log GIT_HOOK_SOCKET
 
 	# Initialize the hooks server
 	hooks = require("./hook-server") GIT_HOOK_SOCKET
@@ -65,6 +72,7 @@ expressGit.serve = (root, options={}) ->
 	# Middleware prologue: setup the req.git object
 	app.use (req, res, next) ->
 		req.git = freeze project_root: GIT_PROJECT_ROOT
+		req._nodegit_free = []
 		next()
 
 	matchRepo = (req, res, next) ->
@@ -82,9 +90,9 @@ expressGit.serve = (root, options={}) ->
 
 	authorize = (req, res, next) ->
 		authPromise req, res
-		.then -> next()
 		.catch UnhandledError, (err) ->
 			throw new UnauthorizedError err.message or "#{err}"
+		.then -> next()
 		.catch next
 
 	attachRepo = (init) ->
@@ -94,6 +102,7 @@ expressGit.serve = (root, options={}) ->
 			.then (repo) ->
 				unless repo?
 					throw new NotFoundError "Repository #{req.git.reponame} not found"
+				req._nodegit_free.push repo
 				req.git = freeze req.git, {repo}
 				next()
 			.catch next
@@ -163,23 +172,23 @@ expressGit.serve = (root, options={}) ->
 				if service is "receive-pack"
 					GIT_HOOK_ID = uuid.v4()
 					env = {EXPRESS_GIT_HOOK, GIT_HOOK_SOCKET, GIT_HOOK_ID}
-					{post_receive, pre_receive} = options
+					pre = (options.hooks or {})['pre-receive']
+					post = (options.hooks or {})['post-receive']
 
-					if typeof pre_receive is "function"
+					if typeof pre is "function"
 						# Respond only after pre-receive hook
 						hooks.once "#{GIT_HOOK_ID}:pre-receive", (changes, callback) ->
 							req.git = freeze req.git, {changes}
-							pre_receive req, res, callback
+							pre req, res, callback
 
-					if typeof post_receive is "function"
+					if typeof post is "function"
 						hooks.once "#{GIT_HOOK_ID}:post-receive", (changes, callback) ->
 							req.git = freeze req.git, {changes}
-							post_receive req, res, callback
+							post req, res, callback
 
 				args = [service, '--stateless-rpc', repo.path()]
 				stdio = [req, res, 'pipe']
 				spawn GIT_EXEC, args, {env, stdio}
-			.then -> repo.free()
 			.catch next
 
 	# Ref advertisement for push/pull operations
@@ -204,7 +213,6 @@ expressGit.serve = (root, options={}) ->
 			args = [service, '--stateless-rpc', '--advertise-refs', repo.path()]
 			stdio = ['ignore', res, 'pipe']
 			spawn GIT_EXEC, args, {stdio}
-			.then -> repo.free()
 	# Direct access to blobs in repos
 	serve_static_pattern = ///
 		^/
@@ -233,26 +241,26 @@ expressGit.serve = (root, options={}) ->
 			.catch (err) ->
 				throw new NotFoundError "Blob not found"
 			.then (object) ->
+				req._nodegit_free.push object
 				unless object.type() is g.Object.TYPE.BLOB
 					throw new NotFoundError "Blob not found"
-				id = "#{object.id()}"
 
-				if id is req.headers['if-none-match']
+				id = object.id().cpy()
+
+				if "#{id}" is req.headers['if-none-match']
 					res.status 304
 					res.end()
 				else
-					g.Blob.lookup repo, object.id()
+					g.Blob.lookup repo, id
 					.then (blob) ->
+						req._nodegit_free.push blob
 						{max_age} = options
-						res.set "Etag", id
+						res.set "Etag", "#{id}"
 						res.set "Cache-Control", "private, max-age=#{max_age}, no-transform, must-revalidate"
 						res.set "Content-Type", mime.lookup(path) or "application/octet-stream"
 						res.set "Content-Length", blob.rawsize()
 						res.write blob.content()
 						res.end()
-						blob.free()
-						object.free()
-						repo.free()
 			.catch next
 	]
 
