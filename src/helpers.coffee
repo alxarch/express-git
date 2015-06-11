@@ -22,6 +22,10 @@ module.exports =
 		else
 			path.join os.tmpdir(), "express-git-hook-#{new Date().getTime()}.sock"
 	exec: Promise.promisify exec
+	isMiddleware: (m) ->
+		typeof m is "function" or
+		m instanceof express.Router or
+		m instanceof express.Application
 	spawn: (args...) ->
 		if args[2]?
 			stdio = args[2]?.stdio or null

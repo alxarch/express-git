@@ -1,270 +1,132 @@
-{a2o, spawn, exec, assign, freeze, socket, pkt_line} = require "./helpers"
+{a2o, spawn, assign, freeze} = require "./helpers"
 {NotFoundError, BadRequestError, UnauthorizedError} = require "./errors"
-mime = require "mime-types"
 Promise = require "bluebird"
 
-{mkdir, which, test} = require "shelljs"
-express = require "express"
+{mkdir, test} = require "shelljs"
+express = require "./express"
 _path = require "path"
-g = require "./ezgit"
-uuid = require "uuid"
-moment = require "moment"
-
-defaults =
-	auto_init: yes
-	pattern: /.*/
-	serve_static: yes
-	authorize: null
-	init_options: null
-	git_exec: which "git"
-	hooks: {}
-	hooks_socket: socket()
-	max_age: 365 * 24 * 60 * 60
-
-UnhandledError = (err) -> not (err.status or null)?
 
 module.exports = expressGit = {}
-expressGit.git = g
+expressGit.git = git = "./ezgit"
+expressGit.gitHttpBackend = require "./services/git_http_backend"
+expressGit.serveBlob  = require "./services/git_http_backend"
 
-# Free up objects at the end of the request
-expressGit.free = ->
-	(req, res, next) ->
-		for obj in req._nodegit_free
-			obj.free()
-		next()
+EXPRESS_GIT_DEFAULTS =
+	git_http_backend: yes
+	auto_init: yes
+	pattern: /.*/
+	auth: null
+	services:
+		"/:git_repo(.*)/:git_service(blob)/:git_blob(.*)":
+			get: expressGit.serveBlob options
 
-expressGit.serve = (root, options={}) ->
-
-	options = assign {}, defaults, options
-
-	GIT_PROJECT_ROOT = _path.resolve "#{root}"
-	GIT_EXEC = options.git_exec
-	GIT_HOOK_SOCKET = options.hooks_socket
-	console.log GIT_HOOK_SOCKET
-
-	# Initialize the hooks server
-	hooks = require("./hook-server") GIT_HOOK_SOCKET
-
-	# Setup the EXPRESS_GIT_HOOK env var passed to hook scripts
-	hook = require.resolve './hook'
-	EXPRESS_GIT_HOOK = [hook]
-	# Allow ".coffee" extensions for development
-	if ".coffee" is _path.extname hook
-		EXPRESS_GIT_HOOK.unshift require.resolve "coffee-script/register"
-	EXPRESS_GIT_HOOK = EXPRESS_GIT_HOOK.join _path.delimiter
-
-
+expressGit.serve = (root, options) ->
+	options = _.assign {}, options, EXPRESS_GIT_DEFAULTS
 	unless options.pattern instanceof RegExp
-		options.pattern = new RegExp "#{options.pattern}"
-
+		options.pattern = new Regexp "#{options.pattern or '.*'}"
+	unless typeof options.auth is "function"
+		options.auth = (req, res, next) -> next()
+	
+	GIT_PROJECT_ROOT = _path.resolve "#{root}"
+	GIT_TEMPLATE_PATH = _path.resolve __dirname, "..", "templates"
+	GIT_INIT_OPTIONS = freeze options.auto_init, template: GIT_TEMPLATE_PATH
+	
 	app = express()
-	# We implement our own etag.
+	
+	NODEGIT_OBJECTS = []
+
 	app.disable "etag"
 
-	# Flag a response as uncacheable
-	noCache = (req, res, next) ->
-			res.set
-				'Pragma': 'no-cache'
-				'Expires': (new Date '1900').toISOString()
-				'Cache-Control': 'no-cache, max-age=0, must-revalidate'
-			next()
+	app.free = (obj) -> NODEGIT_OBJECTS.push obj 
+	app.param "git_service", (req, res, next, service) ->
+		if service is "info/refs" and req.method is "get"
+			{service} = req.query
+			unless service in ["upload-pack", "receive-pack"]
+				return next new BadRequestError "Invalid service #{service}"
 
-	# Middleware prologue: setup the req.git object
-	app.use (req, res, next) ->
-		req.git = freeze project_root: GIT_PROJECT_ROOT
-		req._nodegit_free = []
-		next()
-
-	matchRepo = (req, res, next) ->
-		m = "#{req.git.reponame}".match options.pattern
-		if m?
-			req.git = freeze req.git, repoargs: freeze a2o m[1..]
-			next()
-		else
-			next new NotFoundError "Repository not found"
-
-	authPromise =
-		if typeof options.auth is "function"
-		then Promise.promisify auth
-		else -> Promise.resolve()
-
-	authorize = (req, res, next) ->
-		authPromise req, res
-		.catch UnhandledError, (err) ->
-			throw new UnauthorizedError err.message or "#{err}"
-		.then -> next()
-		.catch next
-
-	attachRepo = (init) ->
-		(req, res, next) ->
-			(if init then openOrInitRepo else openRepo) req
-			.catch (err) -> null
-			.then (repo) ->
-				unless repo?
-					throw new NotFoundError "Repository #{req.git.reponame} not found"
-				req._nodegit_free.push repo
-				req.git = freeze req.git, {repo}
-				next()
-			.catch next
-
-	openOrInitRepo = (req) ->
-		git_dir = _path.join GIT_PROJECT_ROOT, req.git.reponame
-
-		openRepo req
-		.catch (err) ->
-			if options.auto_init and not test "-e", git_dir
-				# Temporarily override req.git.service
-				restore = req.git
-				req.git = freeze req.git, service: "init"
-				authorize req, res
-				.then -> initOptions req
-				.then (init) -> g.Repository.init git_dir, init
+		cb = (err) ->
+			if err
+				next if err.status then err else new UnauthorizedError err.message
 			else
-				null
+				req.git = freeze req.git, {service}
+				next()
+		options.auth req, res, cb, service
 
-
-	openRepo = (req) ->
-		git_dir = _path.join GIT_PROJECT_ROOT, req.git.reponame
-		g.Repository.open git_dir,
+	app.param "git_repo", (req, res, next, reponame) ->
+		m = "#{reponame}".match options.pattern
+		unless m?
+			return next new NotFoundError "Repository not found"
+		git_dir = _path.join GIT_PROJECT_ROOT, reponame
+		git.Repository.open git_dir,
 			bare: yes
 			# Set the topmost dir to GIT_PROJECT_ROOT to avoid
 			# searching in it's parents for .git dirs
 			ceilings: [GIT_PROJECT_ROOT]
-
-	initOptions = (req) ->
-		template = _path.resolve __dirname, '..', 'templates/'
-		description = """
-			#{req.git.reponame}
-			============
-
-			This repository was created on #{new Date()} by express-git.
-			"""
-
-		p = Promise.resolve do ->
-			{init_options} = options
-			switch typeof init_options
-				when "function"
-					init_options req
-				when "object"
-					init_options
-				else
-					{}
-		p.then (options) ->
-			assign {template, description}, options
-
-	# Main push/pull services
-	# via git receive-pack/upload-pack commands
-	app.post /^\/(.*)\.git\/git-(receive-pack|upload-pack)$/,
-		noCache
-		(req, res, next) ->
-			[reponame, service] = req.params
-			req.git = freeze req.git, {reponame, service}
-
+		.catch (err) ->
+			if options.auto_init and not test "-e", git_dir
+				git.Repository.init git_dir, GIT_INIT_OPTIONS
+			else
+				null
+		.catch -> null
+		.then (repo) ->
+			unless repo?
+				throw new NotFoundError "Repository #{git_repo} not found"
+			NODEGIT_OBJECTS.push repo
+			# TODO: use path-to-regexp for named params
+			repo.params = freeze a2o m[1..]
+			repo.name = reponame
+			req.git = freeze req.git, {git_dir, repo}
+		.catch next
+	
+	app.param "git_ref", (req, res, next, git_ref) ->
+		unless req.git.repo instanceof git.Repository
+			throw new Error "No repository to lookup reference in"
+		repo.getReference git_ref
+		.then (ref) ->
+			NODEGIT_OBJECTS.push ref
+			req.git = freeze req.git, {ref}
 			next()
-		matchRepo
-		authorize
-		attachRepo options.auto_init
-		(req, res, next) ->
-			{repo, service} = req.git
-			res.set 'Content-Type', "application/x-git-#{service}-result"
-			hooks.then (hooks) ->
-				env = {}
-				if service is "receive-pack"
-					GIT_HOOK_ID = uuid.v4()
-					env = {EXPRESS_GIT_HOOK, GIT_HOOK_SOCKET, GIT_HOOK_ID}
-					pre = (options.hooks or {})['pre-receive']
-					post = (options.hooks or {})['post-receive']
+		.catch (err) -> throw if err.status then err else new NotFoundError err.message
+		.catch next
 
-					if typeof pre is "function"
-						# Respond only after pre-receive hook
-						hooks.once "#{GIT_HOOK_ID}:pre-receive", (changes, callback) ->
-							req.git = freeze req.git, {changes}
-							pre req, res, callback
-
-					if typeof post is "function"
-						hooks.once "#{GIT_HOOK_ID}:post-receive", (changes, callback) ->
-							req.git = freeze req.git, {changes}
-							post req, res, callback
-
-				args = [service, '--stateless-rpc', repo.path()]
-				stdio = [req, res, 'pipe']
-				spawn GIT_EXEC, args, {env, stdio}
-			.catch next
-
-	# Ref advertisement for push/pull operations
-	# via git receive-pack/upload-pack commands
-	app.get /\/(.*)\.git\/info\/refs/,
-		noCache
-		(req, res, next) ->
-			reponame = req.params[0]
-			service = req.query.service
-			unless service in ["git-upload-pack", "git-receive-pack"]
-				throw new BadRequestError "Invalid service #{service}"
-			service = service.replace /^git-/, ''
-			req.git = freeze req.git, {reponame, service}
+	app.param "git_blob", (req, res, next, git_blob) ->
+		unless req.git.repo instanceof git.Repository
+			throw new Error "No repository to lookup blob in"
+		repo.find git_blob
+		.then (obj) ->
+			NODEGIT_OBJECTS.push obj
+			unless typeof obj is git.Object.TYPE.BLOB
+				throw new BadRequestError "Wrong  object type"
+			git.Blob.lookup obj.id().cpy()
+		.then (blob) ->
+			NODEGIT_OBJECTS.push blob
+			req.git = freeze req.git, {blob}
 			next()
-		matchRepo
-		authorize
-		attachRepo options.auto_init
-		(req, res, next) ->
-			{service, reponame, repo} = req.git
-			res.set 'Content-Type', "application/x-git-#{service}-advertisement"
-			res.write pkt_line "# service=git-#{service}\n0000"
-			args = [service, '--stateless-rpc', '--advertise-refs', repo.path()]
-			stdio = ['ignore', res, 'pipe']
-			spawn GIT_EXEC, args, {stdio}
-	# Direct access to blobs in repos
-	serve_static_pattern = ///
-		^/
-		(.*)\.git  # Repo path MUST end with .git
-		/blob/
-		(?:(.*):)?  # commit-ish (default: HEAD) ends with :
-	   			    # Having it in path allows relative path resolutions
-		(.*)        # Rest of the path is used to resolve a file in workdir
-		$
-		///
+		.catch (err) -> throw if err.status then err else new NotFoundError err.message
+		.catch next
 
-	serve_static = [
-		(req, res, next) ->
-			[reponame, rev, path] = req.params
+	if options.git_http_backend
+		app.use expressGit.gitHttpBackend assign {}, options.git_http_backend
+	
+	app.registerService = (method="use", route, handler) ->
+		unless typeof app[method] if "function"
+			throw new TypeError "Invalid method #{method}"
+		unless isMiddleware handler
+			throw new TypeError "Invalid service handler for #{route}"
 
-			service = "blob"
-			rev ?= "HEAD"
-			req.git = freeze req.git, {reponame, path, service, rev}
-			next()
-		matchRepo
-		authorize
-		attachRepo no
-		(req, res, next) ->
-			{rev, path, repo} = req.git
-			repo.find {rev, path}
-			.catch (err) ->
-				throw new NotFoundError "Blob not found"
-			.then (object) ->
-				req._nodegit_free.push object
-				unless object.type() is g.Object.TYPE.BLOB
-					throw new NotFoundError "Blob not found"
+		app[method] route, handler
+		app
 
-				id = object.id().cpy()
+	for route, service of options.services
+		if isMiddleware service
+			app.registerService route, service
+		else if typeof service is "object"
+			for own method, handler of service
+				app.registerService method, route, service
 
-				if "#{id}" is req.headers['if-none-match']
-					res.status 304
-					res.end()
-				else
-					g.Blob.lookup repo, id
-					.then (blob) ->
-						req._nodegit_free.push blob
-						{max_age} = options
-						res.set "Etag", "#{id}"
-						res.set "Cache-Control", "private, max-age=#{max_age}, no-transform, must-revalidate"
-						res.set "Content-Type", mime.lookup(path) or "application/octet-stream"
-						res.set "Content-Length", blob.rawsize()
-						res.write blob.content()
-						res.end()
-			.catch next
-	]
-
-	if options.serve_static
-		app.get serve_static_pattern, serve_static
-
+	# Cleanup nodegit objects
+	app.use (req, res, next) ->
+		for obj in NODEGIT_OBJECTS when typeof obj?.free is "function"
+			obj.free()
+		next()
 	app
