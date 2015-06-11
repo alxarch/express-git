@@ -1,25 +1,25 @@
 {assign} = require "../helpers"
 mime = require "mime-types"
 git = require "../ezgit"
+Promise = require "bluebird"
+{NotFoundError, NonHttpError} = require "../errors"
 
 SERVE_BLOB_DEFAULTS = max_age: 365 * 24 * 60 * 60
-expressGit.serveBlob = (options) ->
+module.exports = (options) ->
 	options = assign {}, SERVE_BLOB_DEFAULTS, options
 	(req, res, next) ->
-		{ref, repo} = req.git
+		{cleanup, repo, ref} = req.git
 		{path} = req.params
-		git.Commit.lookup  repo, ref.target()
-		.then (commit) ->
-			req._nodegit_objects.push commit
-			commit.getEntry path
+		Promise.resolve if ref then repo.getCommit(ref.target()) else repo.getHeadCommit()
+		.tap cleanup
+		.then (commit) -> Promise.resolve commit.getEntry path
+		.tap cleanup
 		.then (entry) ->
-			req._nodegit_objects.push entry
 			unless entry.isBlob()
 				throw new NotFoundError "Blob not found"
-			entry.getBlob()
+			Promise.resolve entry.getBlob()
+		.tap cleanup
 		.then (blob) ->
-			req._nodegit_objects.push blob
-
 			id = "#{blob.id()}"
 
 			if id is req.headers['if-none-match']
@@ -33,4 +33,5 @@ expressGit.serveBlob = (options) ->
 					"Content-Length": blob.rawsize()
 				res.write blob.content()
 				res.end()
+		.catch NonHttpError, (err) -> throw new NotFoundError err.message
 		.catch next

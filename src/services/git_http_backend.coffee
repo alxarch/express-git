@@ -1,5 +1,4 @@
-express = require "../express"
-{socket, assign, spawn, pkt_line} = require "./helpers"
+{socket, assign, spawn, pkt_line} = require "../helpers"
 {which} = require "shelljs"
 _path = require "path"
 uuid = require "uuid"
@@ -40,9 +39,8 @@ createHookServer = Promise.promisify (socket, next) ->
 	catch err
 		next err
 
-module.exports = (options) ->
+module.exports = (app, options) ->
 	options = assign {}, GIT_HTTP_BACKEND_DEFAULTS, options
-	backend = new express.Router()
 
 	GIT_EXEC = options.git_executable
 
@@ -61,7 +59,7 @@ module.exports = (options) ->
 	else
 		hooks = Promise.resolve no
 
-	backend.post, ":git_repo(.*).git/git-:git_service(receive-pack|upload-pack)", (req, res, next) ->
+	app.post ":git_repo(.*).git/git-:git_service(receive-pack|upload-pack)", (req, res, next) ->
 		{repo, service} = req.git
 		res.set
 			'Pragma': 'no-cache'
@@ -93,17 +91,17 @@ module.exports = (options) ->
 	
 	# Ref advertisement for push/pull operations
 	# via git receive-pack/upload-pack commands
-	backend.get "/:git_repo(.*).git/:git_service(info/refs)", (req, res, next) ->
+	app.get "/:git_repo(.*).git/:git_service(info/refs)", (req, res, next) ->
 		{service, git_dir} = req.git
 		res.set
 			'Pragma': 'no-cache'
 			'Expires': (new Date '1900').toISOString()
 			'Cache-Control': 'no-cache, max-age=0, must-revalidate'
-			'Content-Type', "application/x-git-#{service}-advertisement"
+			'Content-Type': "application/x-git-#{service}-advertisement"
 		res.write pkt_line "# service=git-#{service}\n0000"
 		args = [service, '--stateless-rpc', '--advertise-refs', git_dir]
 		stdio = ['ignore', res, 'pipe']
 		spawn GIT_EXEC, args, {stdio}
 		.catch next
 
-	backend
+	app

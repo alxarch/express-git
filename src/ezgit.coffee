@@ -14,7 +14,7 @@ g.RepositoryInitOptions.fromObject = (options) ->
 		result.flags |= INIT_FLAG.NO_DOTGIT_DIR
 	if opt.description
 		result.description = opt.description
-	result.initialHead = if opt.head then "#{opt.head}" else "refs/heads/master"
+	result.initialHead = if opt.head then "#{opt.head}" else "master"
 	if opt.origin
 		result.originUrl = "#{opt.origin}"
 	if opt.workdir

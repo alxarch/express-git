@@ -28,10 +28,12 @@ class UnauthorizedError extends HttpError
 	name: "UnauthorizedError"
 	message: "Not Authorized"
 
+NonHttpError = (err) -> not err.status
 module.exports = {
 	HttpError
 	ServerError
 	BadRequestError
 	UnauthorizedError
 	NotFoundError
+	NonHttpError
 }
