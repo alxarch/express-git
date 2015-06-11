@@ -17,7 +17,7 @@ EXPRESS_GIT_DEFAULTS =
 	pattern: /.*/
 	auth: null
 	services:
-		"/:git_repo(.*)/:git_service(blob)/:git_blob(.*)":
+		"/:git_repo(.*)/:git_ref(.*)?/:git_service(blob)/:path(.*)":
 			get: expressGit.serveBlob options
 
 expressGit.serve = (root, options) ->
@@ -37,7 +37,7 @@ expressGit.serve = (root, options) ->
 
 	app.disable "etag"
 
-	app.free = (obj) -> NODEGIT_OBJECTS.push obj 
+
 	app.param "git_service", (req, res, next, service) ->
 		if service is "info/refs" and req.method is "get"
 			{service} = req.query
@@ -105,11 +105,15 @@ expressGit.serve = (root, options) ->
 		.catch (err) -> throw if err.status then err else new NotFoundError err.message
 		.catch next
 
+	app.use (req, res, next) ->
+		req._nodegit_objects = NODEGIT_OBJECTS
+		next()
+
 	if options.git_http_backend
 		app.use expressGit.gitHttpBackend assign {}, options.git_http_backend
 	
 	app.registerService = (method="use", route, handler) ->
-		unless typeof app[method] if "function"
+		unless typeof app[method] is "function"
 			throw new TypeError "Invalid method #{method}"
 		unless isMiddleware handler
 			throw new TypeError "Invalid service handler for #{route}"
