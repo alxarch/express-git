@@ -1,5 +1,4 @@
 {a2o, spawn, assign, freeze} = require "./helpers"
-{NonHttpError, NotFoundError, BadRequestError, UnauthorizedError} = require "./errors"
 Promise = require "bluebird"
 
 {mkdir, test} = require "shelljs"
@@ -8,7 +7,6 @@ _path = require "path"
 
 module.exports = expressGit = {}
 expressGit.git = git = require "./ezgit"
-expressGit.errors = require "./errors"
 expressGit.services = require "./services"
 
 EXPRESS_GIT_DEFAULTS =
@@ -30,6 +28,8 @@ expressGit.serve = (root, options) ->
 	GIT_INIT_OPTIONS = freeze options.auto_init, template: GIT_TEMPLATE_PATH
 
 	app = express()
+
+	{NonHttpError, NotFoundError, BadRequestError, UnauthorizedError} = app.errors = require "./errors"
 
 	NODEGIT_OBJECTS = []
 	cleanup = (obj) ->
