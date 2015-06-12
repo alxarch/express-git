@@ -127,3 +127,12 @@ expressGit.serve = (root, options) ->
 			obj.free()
 		next()
 	app
+
+unless module.parent
+	port = process.env.EXPRESS_GIT_PORT or 9000
+	root = process.env.EXPRESS_GIT_ROOT or "/tmp/repos"
+	app = express()
+	app.use require("morgan") "dev"
+	app.use expressGit.serve root
+	app.listen port, ->
+		console.log "Express git serving #{root} on port #{9000}"
