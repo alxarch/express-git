@@ -1,7 +1,7 @@
 {
   "name": "express-git",
-  "version": "0.4.0",
-  "description": "An express middleware acting as git-http-backend",
+  "version": "0.5.0",
+  "description": "An express middleware acting as git-http-backend and more",
   "main": "lib/index.js",
   "scripts": {
     "prepublish": "cake build",
