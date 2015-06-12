@@ -1,7 +1,7 @@
 _path = require "path"
 g = require "nodegit"
-assign = require "object-assign"
 Promise = g.Promise = require "bluebird"
+{assign} = require "./helpers"
 
 {INIT_FLAG, INIT_MODE} = g.Repository
 g.RepositoryInitOptions.fromObject = (options) ->

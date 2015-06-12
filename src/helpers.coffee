@@ -1,11 +1,17 @@
 os = require "os"
 path = require "path"
-assign = require "object-assign"
 {spawn, exec} = require "child_process"
 Promise = require "bluebird"
+assign = (base, others...) ->
+	return base unless typeof base is "object"
+	for obj in others when typeof obj is "object"
+		for own key, value of obj
+			base[key] = value
+	base
 
 module.exports =
 	assign: assign
+
 	a2o: (arr) -> (-> arguments) arr...
 	pkt_line: (line) ->
 		unless line instanceof Buffer
