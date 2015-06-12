@@ -2,23 +2,26 @@
 mime = require "mime-types"
 git = require "../ezgit"
 Promise = require "bluebird"
-{NotFoundError, NonHttpError} = require "../errors"
 
-SERVE_BLOB_DEFAULTS = max_age: 365 * 24 * 60 * 60
-module.exports = (options) ->
+SERVE_BLOB_DEFAULTS =
+	max_age: 365 * 24 * 60 * 60
+SERVE_BLOB_ROUTE = "/:git_repo(.*).git/:git_ref(.*)?/:git_service(blob)/:path(.*)"
+module.exports = (app, options) ->
+	{NotFoundError, NonHttpError} = app.errors
+
 	options = assign {}, SERVE_BLOB_DEFAULTS, options
-	(req, res, next) ->
+	app.get SERVE_BLOB_ROUTE, (req, res, next) ->
 		{cleanup, repo, ref} = req.git
 		{path} = req.params
 		Promise.resolve if ref then repo.getCommit(ref.target()) else repo.getHeadCommit()
-		.tap cleanup
+		.then cleanup
 		.then (commit) -> Promise.resolve commit.getEntry path
-		.tap cleanup
+		.then cleanup
 		.then (entry) ->
 			unless entry.isBlob()
 				throw new NotFoundError "Blob not found"
 			Promise.resolve entry.getBlob()
-		.tap cleanup
+		.then cleanup
 		.then (blob) ->
 			id = "#{blob.id()}"
 

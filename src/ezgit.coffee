@@ -1,6 +1,5 @@
 _path = require "path"
 g = require "nodegit"
-Promise = g.Promise = require "bluebird"
 {assign} = require "./helpers"
 
 {INIT_FLAG, INIT_MODE} = g.Repository
@@ -102,7 +101,7 @@ g.Repository.open = (path, options={}) ->
 
 g.Repository._init = g.Repository.init
 g.Repository.init = (path, options={}) ->
-	Promise.resolve @initExt path, g.RepositoryInitOptions.fromObject options
+	@initExt path, g.RepositoryInitOptions.fromObject options
 
 asrev = g.Revparse.toSpec = (value) ->
 	switch typeof value
@@ -146,7 +145,7 @@ assign g.Repository::,
 		oid = g.Oid.fromAnything target
 		force = if options.force then 1 else 0
 		sig = options.signature or Signature.default @
-		Promise.resolve g.Reference.create @, name, oid, force, sig, message or ""
+		g.Reference.create @, name, oid, force, sig, message or ""
 
 Object.defineProperty g.Revwalk::, 'repo',
 	get: -> @repository()

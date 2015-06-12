@@ -88,7 +88,7 @@ module.exports = (app, options) ->
 			stdio = [req, res, 'pipe']
 			spawn GIT_EXEC, args, {env, stdio}
 		.catch next
-	
+
 	# Ref advertisement for push/pull operations
 	# via git receive-pack/upload-pack commands
 	app.get "/:git_repo(.*).git/:git_service(info/refs)", (req, res, next) ->

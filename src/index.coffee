@@ -9,8 +9,7 @@ _path = require "path"
 module.exports = expressGit = {}
 expressGit.git = git = require "./ezgit"
 expressGit.errors = require "./errors"
-expressGit.gitHttpBackend = require "./services/git_http_backend"
-expressGit.serveBlob  = require "./services/serve_blob"
+expressGit.services = require "./services"
 
 EXPRESS_GIT_DEFAULTS =
 	git_http_backend: yes
@@ -18,7 +17,6 @@ EXPRESS_GIT_DEFAULTS =
 	auto_init: yes
 	pattern: /.*/
 	auth: null
-	services: {}
 
 expressGit.serve = (root, options) ->
 	options = assign {}, options, EXPRESS_GIT_DEFAULTS
@@ -26,15 +24,17 @@ expressGit.serve = (root, options) ->
 		options.pattern = new Regexp "#{options.pattern or '.*'}"
 	unless typeof options.auth is "function"
 		options.auth = (req, res, next) -> next()
-	
+
 	GIT_PROJECT_ROOT = _path.resolve "#{root}"
 	GIT_TEMPLATE_PATH = _path.resolve __dirname, "..", "templates"
 	GIT_INIT_OPTIONS = freeze options.auto_init, template: GIT_TEMPLATE_PATH
-	
+
 	app = express()
-	
+
 	NODEGIT_OBJECTS = []
-	cleanup = NODEGIT_OBJECTS.push.bind NODEGIT_OBJECTS
+	cleanup = (obj) ->
+		NODEGIT_OBJECTS.push obj
+		obj
 
 	app.disable "etag"
 
@@ -76,7 +76,7 @@ expressGit.serve = (root, options) ->
 			else
 				null
 		.catch -> null
-		.tap cleanup
+		.then cleanup
 		.then (repo) ->
 			unless repo?
 				throw new NotFoundError "Repository #{git_repo} not found"
@@ -86,13 +86,13 @@ expressGit.serve = (root, options) ->
 			req.git = freeze req.git, {git_dir, repo}
 			next()
 		.catch next
-	
+
 	app.param "git_ref", (req, res, next, git_ref) ->
 		{repo} = req.git
 		unless repo instanceof git.Repository
 			return next new Error "No repository to lookup reference in"
 		Promise.resolve repo.getReference git_ref
-		.tap cleanup
+		.then cleanup
 		.then (ref) ->
 			req.git = freeze req.git, {ref}
 			next()
@@ -104,12 +104,12 @@ expressGit.serve = (root, options) ->
 		unless repo instanceof git.Repository
 			return next new Error "No repository to lookup blob in"
 		Promise.resolve repo.find git_blob
-		.tap cleanup
+		.then cleanup
 		.then (obj) ->
 			unless typeof obj is git.Object.TYPE.BLOB
 				throw new BadRequestError "Wrong  object type"
 			Promise.resolve repo.getBlob obj.id()
-		.tap cleanup
+		.then cleanup
 		.then (blob) ->
 			req.git = freeze req.git, {blob}
 			next()
@@ -117,9 +117,9 @@ expressGit.serve = (root, options) ->
 		.catch next
 
 	if options.git_http_backend
-		expressGit.gitHttpBackend app, assign {}, options.git_http_backend
+		expressGit.services.git_http_backend app, options.git_http_backend
 	if options.serve_static
-		app.get "/:git_repo(.*).git/:git_ref(.*)?/:git_service(blob)/:path(.*)", expressGit.serveBlob options
+		expressGit.services.blob app, options.serve_static
 
 	# Cleanup nodegit objects
 	app.use (req, res, next) ->
