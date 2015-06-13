@@ -8,39 +8,6 @@ GIT_HTTP_BACKEND_DEFAULTS =
 	hooks: {}
 	hooks_socket: socket()
 	git_executable: which "git"
-{Transform, Writable, PassThrough} = require "stream"
-
-class GitReceivePackSniffer extends Transform
-	EMPTY = new Buffer()
-	constructor: (options) ->
-		options = assign {}, options, readableObjectMode: yes
-		super options
-		@pos = -1
-		@offset = 0
-		@buffer = EMPTY
-
-	_transform: (chunk, encoding, callback) ->
-		unless @buffer?
-			return do callback
-
-		@buffer = Buffer.concat [@buffer, chunk]
-		try
-			pos = @buffer.readUint32BE @offset
-		catch RangeError
-			return do callback
-		if pos > 0
-			line = @buffer.slice @offset + 4, @offset + pos
-			@offset += pos
-
-		else if pos is 0
-			@buffer = null
-
-
-
-		callback()
-
-
-
 
 createHookServer = Promise.promisify (socket, next) ->
 	{createServer} = require "net"
