@@ -24,8 +24,7 @@ expressGit.serve = (root, options) ->
 		options.auth = (req, res, next) -> next()
 
 	GIT_PROJECT_ROOT = _path.resolve "#{root}"
-	GIT_TEMPLATE_PATH = _path.resolve __dirname, "..", "templates"
-	GIT_INIT_OPTIONS = freeze options.auto_init, template: GIT_TEMPLATE_PATH
+	GIT_INIT_OPTIONS = freeze options.auto_init
 
 	app = express()
 
@@ -134,5 +133,9 @@ unless module.parent
 	app = express()
 	app.use require("morgan") "dev"
 	app.use expressGit.serve root
+	app.use (err, req, res, next) ->
+		console.dir err
+		console.error err.stack
+		next err
 	app.listen port, ->
 		console.log "Express git serving #{root} on port #{9000}"

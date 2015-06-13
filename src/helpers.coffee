@@ -9,7 +9,24 @@ assign = (base, others...) ->
 			base[key] = value
 	base
 
+zlib = require "zlib"
+
+{UnsupportedMediaTypeError} = require "./errors"
 module.exports =
+	requestStream: (req) ->
+		encoding = req.headers['content-encoding']?.toLowerCase() or 'identity'
+		length = req.headers['content-length']
+		switch encoding
+			when "deflate"
+				req.pipe zlib.createInflate()
+			when "gzip"
+				req.pipe zlib.createGunzip()
+			when "identity"
+				req.length = length
+				req
+			else
+				throw new UnsupportedMediaTypeError "Unsuported encoding #{encoding}"
+
 	assign: assign
 
 	a2o: (arr) -> (-> arguments) arr...
@@ -21,12 +38,6 @@ module.exports =
 	freeze: (args...) ->
 		args.unshift {}
 		Object.freeze assign.apply null, args
-	socket: ->
-		if os.platform() is "win32"
-			# A random port between 10000 and 14000
-			((Math.random() * 4000) + 10000) | 0
-		else
-			path.join os.tmpdir(), "express-git-hook-#{new Date().getTime()}.sock"
 	exec: Promise.promisify exec
 	isMiddleware: (m) ->
 		typeof m is "function" or

@@ -1,96 +1,31 @@
-{socket, assign, spawn, pkt_line} = require "../helpers"
+{requestStream, assign, spawn, pkt_line} = require "../helpers"
 {which} = require "shelljs"
 _path = require "path"
-uuid = require "uuid"
 Promise = require "bluebird"
 
 GIT_HTTP_BACKEND_DEFAULTS =
-	hooks: {}
-	hooks_socket: socket()
+	hooks: null
 	git_executable: which "git"
-{Transform, Writable, PassThrough} = require "stream"
+{PassThrough} = require "stream"
+{PACK, createGitPackStream, GitPktLines} = require "../stream"
 
-class GitReceivePackSniffer extends Transform
-	EMPTY = new Buffer()
-	constructor: (options) ->
-		options = assign {}, options, readableObjectMode: yes
-		super options
-		@pos = -1
-		@offset = 0
-		@buffer = EMPTY
+promisifyHooks = (hooks) ->
+	return no unless typeof hooks is "object"
 
-	_transform: (chunk, encoding, callback) ->
-		unless @buffer?
-			return do callback
+	result =
+		'pre-receive': Promise.resolve
+		'post-receive': Promise.resolve
+		'update': Promise.resolve
 
-		@buffer = Buffer.concat [@buffer, chunk]
-		try
-			pos = @buffer.readUint32BE @offset
-		catch RangeError
-			return do callback
-		if pos > 0
-			line = @buffer.slice @offset + 4, @offset + pos
-			@offset += pos
-
-		else if pos is 0
-			@buffer = null
-
-
-
-		callback()
-
-
-
-
-createHookServer = Promise.promisify (socket, next) ->
-	{createServer} = require "net"
-	srv = createServer {pauseOnConnect: yes}, (conn) ->
-		callback = (err) ->
-			code = new Buffer [
-				if err then (parseInt(err) or 1) else 0
-			]
-			conn.write code
-
-		conn.on "readable", () ->
-			data = conn.read()
-			unless data?
-				return callback()
-			try
-				{id, name, changes} = JSON.parse "#{data}"
-			catch err
-				return callback 4
-
-
-			try
-				srv.emit "#{id}:#{name}", changes, callback
-			catch err
-				console.error err.stack
-				callback 3
-	socket = parseInt(socket) or _path.resolve "#{socket}"
-	try
-		srv.listen socket, -> next null, srv
-	catch err
-		next err
+	for own hook, callback of hooks when result[hook] and typeof callback is "function"
+		result[hook] = Promise.promisify callback
+	result
 
 module.exports = (app, options) ->
 	options = assign {}, GIT_HTTP_BACKEND_DEFAULTS, options
 
 	GIT_EXEC = options.git_executable
-
-	if options.hooks
-		GIT_HOOK_SOCKET = options.hooks_socket
-		# Initialize the hooks server
-		hooks = createHookServer GIT_HOOK_SOCKET
-
-		# Setup the EXPRESS_GIT_HOOK env var passed to hook scripts
-		hook = require.resolve '../hook'
-		EXPRESS_GIT_HOOK = [hook]
-		# Allow ".coffee" extensions for development
-		if ".coffee" is _path.extname hook
-			EXPRESS_GIT_HOOK.unshift require.resolve "coffee-script/register"
-		EXPRESS_GIT_HOOK = EXPRESS_GIT_HOOK.join _path.delimiter
-	else
-		hooks = Promise.resolve no
+	GIT_HOOKS = promisifyHooks options.hooks
 
 	app.post ":git_repo(.*).git/git-:git_service(receive-pack|upload-pack)", (req, res, next) ->
 		{repo, service} = req.git
@@ -99,28 +34,70 @@ module.exports = (app, options) ->
 			'Expires': (new Date '1900').toISOString()
 			'Cache-Control': 'no-cache, max-age=0, must-revalidate'
 			'Content-Type': "application/x-git-#{service}-result"
-		hooks.then (hooks) ->
-			env = {}
-			if hooks and service is "receive-pack"
-				GIT_HOOK_ID = uuid.v4()
-				env = {EXPRESS_GIT_HOOK, GIT_HOOK_SOCKET, GIT_HOOK_ID}
-				{post_receive, pre_receive} = options
 
-				if typeof pre_receive is "function"
-					# Respond only after pre-receive hook
-					hooks.once "#{GIT_HOOK_ID}:pre-receive", (changes, callback) ->
-						req.git = freeze req.git, {changes}
-						pre_receive req, res, callback
+		args = [service, '--stateless-rpc', repo.path()]
+		unless GIT_HOOKS and service is "receive-pack"
+			stdio = [requestStream(req), res, "pipe"]
+			spawn GIT_EXEC, args, {stdio}
+			.then -> next()
+			.catch next
+			return
 
-				if typeof post_receive is "function"
-					hooks.once "#{GIT_HOOK_ID}:post-receive", (changes, callback) ->
-						req.git = freeze req.git, {changes}
-						post_receive req, res, callback
+		git_pack_stream = createGitPackStream()
+		git_pack_stream.on "error", next
+		git_pack_stream.pktlines.on "error", next
+		git_pack_stream.pack.on "error", next
+		changes = []
+		capabilities = null
+		changeline = ({before, after, ref}) ->
+			line = [before, after, ref].join " "
+			console.dir ref
+			if capabilities?
+				line = "#{line}\0#{capabilities}\n"
+				capabilities = null
+				line
+			else
+				"#{line}\n"
 
-			args = [service, '--stateless-rpc', repo.path()]
-			stdio = [req, res, 'pipe']
-			spawn GIT_EXEC, args, {env, stdio}
-		.catch next
+		git_pack_stream.pktlines.on "data", (pktline) ->
+			pktline = "#{pktline}"
+			if capabilities?
+				line = pktline
+			else
+				[line, capabilities] = pktline.split "\0"
+			[before, after, ref] = line.split " "
+			changes.push {before, after, ref}
+
+		git_pack_stream.pktlines.on "end", ->
+			GIT_HOOKS['pre-receive'] changes, req, res
+			.then -> changes
+			.map (change) ->
+				GIT_HOOKS['update'] change, req, res
+				.then -> change
+				.catch (err) ->
+					res.write "Push to #{change.ref} rejected via express-git hook: #{err}"
+					null
+			.then (changes) ->
+				changes = (c for c in changes when c?)
+				return unless changes.length > 0
+
+				buffer = new PassThrough()
+				pktlines = new GitPktLines()
+				pktlines.pipe buffer
+				for change in changes when change?
+					pktlines.write changeline change
+				pktlines.end()
+				buffer.write PACK
+				git_pack_stream.pack.pipe buffer
+				stdio = [buffer, res, "pipe"]
+				spawn GIT_EXEC, args, {stdio}
+				.then -> GIT_HOOKS['post-receive'] changes, res, res
+				.catch console.error
+			.then -> next()
+			.catch next
+
+		# Go git 'em!
+		requestStream(req).pipe git_pack_stream
 
 	# Ref advertisement for push/pull operations
 	# via git receive-pack/upload-pack commands

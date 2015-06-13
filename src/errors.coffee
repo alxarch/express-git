@@ -27,6 +27,10 @@ class UnauthorizedError extends HttpError
 	status: 401
 	name: "UnauthorizedError"
 	message: "Not Authorized"
+class UnsupportedMediaTypeError extends HttpError
+	status: 415
+	name: "UnsupportedMediaTypeError"
+	message: "Unsupported Media Type"
 
 NonHttpError = (err) -> not err.status
 module.exports = {
@@ -36,4 +40,5 @@ module.exports = {
 	UnauthorizedError
 	NotFoundError
 	NonHttpError
+	UnsupportedMediaTypeError
 }
