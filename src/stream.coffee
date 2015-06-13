@@ -3,11 +3,14 @@
 ZERO_PKT_LINE = new Buffer "0000"
 PACK = new Buffer "PACK"
 
-class GitPackStream extends Transform
+class GitUpdateRequest extends Transform
 	constructor: ->
 		super
 		@pos = 0
 		@buffer = null
+		@changes = []
+		@capabilities = null
+
 	_transform: (chunk, encoding, callback) ->
 		return callback null, chunk if @pos < 0
 		buffer = if @buffer? then Buffer.concat [@buffer, chunk] else chunk
@@ -19,23 +22,20 @@ class GitPackStream extends Transform
 
 			head = buffer.slice @pos, end
 			if head.equals ZERO_PKT_LINE
-				@pos = end
-				end += 4
-				unless PACK.equals buffer.slice @pos, end
-					@emit "error", new Error "No pack header"
-					@push null
-					break
-				@push ZERO_PKT_LINE
-				@push PACK
+				@emit "changes", @changes, @capabilities
 				@push buffer.slice end
-				@pos = -1
 				@buffer = null
+				@pos = -1
 				break
 			
 			offset = parseInt "#{head}", 16
 			if offset > 0
-				@push buffer.slice @pos, @pos + offset
 				@pos += offset
+				line = buffer.toString "utf8", end, @pos
+				unless @capabilities?
+					[line, capabilities] = line.split "\0"
+				[before, after, ref] = line.split " "
+				@changes.push {before, after, ref}
 			else
 				@emit "error", new Error "Invalid pkt line"
 				@push null
@@ -51,39 +51,9 @@ class GitPktLines extends Transform
 	_flush: (callback) ->
 		@push ZERO_PKT_LINE
 
-class GitReadPktLines extends Transform
-	header: yes
-	_transform: (chunk, encoding, callback) ->
-		unless @header
-			return callback()
-		@header = chunk isnt ZERO_PKT_LINE
-		if @header
-			@push chunk.slice 4
-		callback()
-
-class GitReadPack extends Transform
-	pack: no
-	_transform: (chunk, encoding, callback) ->
-		if @pack
-			@push chunk
-		else if chunk is PACK
-			@pack = yes
-		callback()
-
-createGitPackStream = ->
-	stream = new GitPackStream()
-	stream.pktlines = new GitReadPktLines()
-	stream.pack = new GitReadPack()
-	stream.pipe stream.pktlines
-	stream.pipe stream.pack
-	stream
-
 module.exports = {
 	PACK
 	ZERO_PKT_LINE
-	GitPackStream
+	GitUpdateRequest
 	GitPktLines
-	GitReadPktLines
-	GitReadPack
-	createGitPackStream
 }

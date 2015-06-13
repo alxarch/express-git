@@ -7,7 +7,7 @@ GIT_HTTP_BACKEND_DEFAULTS =
 	hooks: null
 	git_executable: which "git"
 {PassThrough} = require "stream"
-{PACK, createGitPackStream, GitPktLines} = require "../stream"
+{GitUpdateRequest, GitPktLines} = require "../stream"
 
 promisifyHooks = (hooks) ->
 	return no unless typeof hooks is "object"
@@ -43,39 +43,24 @@ module.exports = (app, options) ->
 			.catch next
 			return
 
-		git_pack_stream = createGitPackStream()
+		git_pack_stream = new GitUpdateRequest()
 		git_pack_stream.on "error", next
-		git_pack_stream.pktlines.on "error", next
-		git_pack_stream.pack.on "error", next
-		changes = []
-		capabilities = null
-		changeline = ({before, after, ref}) ->
-			line = [before, after, ref].join " "
-			console.dir ref
-			if capabilities?
-				line = "#{line}\0#{capabilities}\n"
-				capabilities = null
-				line
-			else
-				"#{line}\n"
-
-		git_pack_stream.pktlines.on "data", (pktline) ->
-			pktline = "#{pktline}"
-			if capabilities?
-				line = pktline
-			else
-				[line, capabilities] = pktline.split "\0"
-			[before, after, ref] = line.split " "
-			changes.push {before, after, ref}
-
-		git_pack_stream.pktlines.on "end", ->
+		git_pack_stream.on "changes", (changes, capabilities) ->
+			changeline = ({before, after, ref}) ->
+				line = [before, after, ref].join " "
+				if capabilities?
+					line = "#{line}\0#{capabilities}\n"
+					capabilities = null
+					line
+				else
+					"#{line}\n"
 			GIT_HOOKS['pre-receive'] changes, req, res
 			.then -> changes
 			.map (change) ->
 				GIT_HOOKS['update'] change, req, res
 				.then -> change
 				.catch (err) ->
-					res.write "Push to #{change.ref} rejected via express-git hook: #{err}"
+					res.write "Push to #{change.ref} rejected: #{err}"
 					null
 			.then (changes) ->
 				changes = (c for c in changes when c?)
@@ -84,16 +69,18 @@ module.exports = (app, options) ->
 				buffer = new PassThrough()
 				pktlines = new GitPktLines()
 				pktlines.pipe buffer
-				for change in changes when change?
+				for change in changes
 					pktlines.write changeline change
 				pktlines.end()
-				buffer.write PACK
-				git_pack_stream.pack.pipe buffer
-				stdio = [buffer, res, "pipe"]
-				spawn GIT_EXEC, args, {stdio}
-				.then -> GIT_HOOKS['post-receive'] changes, res, res
-				.catch console.error
-			.then -> next()
+				git_pack_stream.pipe buffer
+				git = spawn GIT_EXEC, args, stdio: [buffer, "ignore", "pipe"]
+				git.process.stdout.pipe res, end: no
+				git.then ->
+					GIT_HOOKS['post-receive'] changes, res, res
+					.catch (err) -> res.write "Post-receive hook failed: #{err}"
+			.then ->
+				next res.end()
+				next()
 			.catch next
 
 		# Go git 'em!

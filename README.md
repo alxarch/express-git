@@ -150,44 +150,20 @@ Set to and object with key-value pairs of hook - callback.
 
 The currenctly implemented hooks are
 
-- `pre-receive: (req, res, next, changes)` With signature: `(req, res, next, changes)` where `changes` is an `Array` of `{before, after, ref}` objects. Passing an error to the `next` callback will effectively abort the push request. Use `res.write` to write info to the git client's `remote` output.
+- `pre-receive: (changes, req, res, next)` With signature: `(req, res, next, changes)` where `changes` is an `Array` of `{before, after, ref}` objects. Passing an error to the `next` callback will effectively abort the push request. Use `res.write` to write info to the git client's `remote` output.
 
-- `post-receive` With signature: `(req, res, next, changes)` where `changes` is an `Array` of `{before, after, ref}` objects. Use `res.write` to write info to the git client's `remote` output.
+- `update` With signature: `(change, req, res, next)` where `changes` is an `Array` of `{before, after, ref}` objects. Use `res.write` to write info to the git client's `remote` output.
+
+- `post-receive` With signature: `(changes, req, res, next)` where `changes` is an `Array` of `{before, after, ref}` objects. Use `res.write` to write info to the git client's `remote` output.
 
 See [Server-Side Hooks][ServerSideHooks] for more info.
 
-> #### How express-git handles hooks
->
-> Git hooks normally are scripts running from the `GIT_DIR/hooks` dir.
-> This is a difficult to configure method especially in the
-> context of a web application where a lot of configuration
-> bootstrap code would have to be replicated and reused in
-> the hook script. And to make things worse per-request
-> customization is practically impossible. Unless...
->
-> #### Hook callbacks
->
-> In order to overcome the above mentioned problems, express-git
-> creates an ad-hoc tcp server where the hook scripts connect to
-> passing their stdin to middleware-like `(req, res, next)`
-> callbacks from the web application and uses the outcome
-> of those callbacks to control the hook exit code.
-
-
-
-#### git_http_backend.options.hooks_socket
-
-> default: random port between 10000 and 14000 on windows or
-> temporary socket file at `/tmp/express-git-TIMESTAMP.sock` on a proper OS.
-
-Where the hook server should listen for hook script connections.
-
-#### git_http_backend.options.git_exec
+#### git_http_backend.options.git_executable
 
 > default: `shelljs.which('git')`
 
 For `git_http_backend` to work you need git installed on the server.
-You can specify the git executable to use with the `git_exec` option.
+You can specify the git executable to use with the `git_executable` option.
 
 
 ## `blob` service
