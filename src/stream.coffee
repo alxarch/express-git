@@ -33,7 +33,7 @@ class GitUpdateRequest extends Transform
 				@pos += offset
 				line = buffer.toString "utf8", end, @pos
 				unless @capabilities?
-					[line, capabilities] = line.split "\0"
+					[line, @capabilities] = line.split "\0"
 				[before, after, ref] = line.split " "
 				@changes.push {before, after, ref}
 			else
@@ -42,19 +42,17 @@ class GitUpdateRequest extends Transform
 				break
 		callback()
 
-class GitPktLines extends Transform
+class Monitor extends Transform
+	constructor: (@name, options) ->
+		super options
 	_transform: (chunk, encoding, callback) ->
-		size = chunk.length + 4
-		head = new Buffer "0000#{size.toString 16}".substr -4, 4
-		@push Buffer.concat [head, chunk]
-		callback()
-	_flush: (callback) ->
-		@push ZERO_PKT_LINE
+		console.dir "#{@name}: #{chunk}"
+		@push chunk
 		callback()
 
 module.exports = {
 	PACK
 	ZERO_PKT_LINE
 	GitUpdateRequest
-	GitPktLines
+	Monitor
 }

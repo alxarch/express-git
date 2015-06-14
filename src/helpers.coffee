@@ -30,11 +30,6 @@ module.exports =
 	assign: assign
 
 	a2o: (arr) -> (-> arguments) arr...
-	pkt_line: (line) ->
-		unless line instanceof Buffer
-			line = new Buffer "#{line}"
-		prefix = new Buffer "0000#{line.length.toString 16}".substr -4, 4
-		Buffer.concat [prefix, line]
 	freeze: (args...) ->
 		args.unshift {}
 		Object.freeze assign.apply null, args
@@ -74,3 +69,7 @@ module.exports =
 					reject new Error "Child process exited with code #{code}"
 		exit.process = cp
 		exit
+	pktline: (line) ->
+		size = line.length + 4
+		head = "0000#{size.toString 16}".substr -4, 4
+		new Buffer "#{head}#{line}"
