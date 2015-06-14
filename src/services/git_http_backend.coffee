@@ -3,29 +3,11 @@
 _path = require "path"
 Promise = require "bluebird"
 
-GIT_HTTP_BACKEND_DEFAULTS =
-	hooks: null
-	git_executable: which "git"
 {PassThrough} = require "stream"
 {GitUpdateRequest, GitPktLines} = require "../stream"
 
-promisifyHooks = (hooks) ->
-	return no unless typeof hooks is "object"
-
-	result =
-		'pre-receive': Promise.resolve
-		'post-receive': Promise.resolve
-		'update': Promise.resolve
-
-	for own hook, callback of hooks when result[hook] and typeof callback is "function"
-		result[hook] = Promise.promisify callback
-	result
-
-module.exports = (app, options) ->
-	options = assign {}, GIT_HTTP_BACKEND_DEFAULTS, options
-
-	GIT_EXEC = options.git_executable
-	GIT_HOOKS = promisifyHooks options.hooks
+module.exports = (app, options={}) ->
+	GIT_EXEC = options?.git_executable or which "git"
 
 	app.post ":git_repo(.*).git/git-:git_service(receive-pack|upload-pack)", (req, res, next) ->
 		{repo, service} = req.git
@@ -36,7 +18,7 @@ module.exports = (app, options) ->
 			'Content-Type': "application/x-git-#{service}-result"
 
 		args = [service, '--stateless-rpc', repo.path()]
-		unless GIT_HOOKS and service is "receive-pack"
+		unless service is "receive-pack"
 			stdio = [requestStream(req), res, "pipe"]
 			spawn GIT_EXEC, args, {stdio}
 			.then -> next()
@@ -54,10 +36,10 @@ module.exports = (app, options) ->
 					line
 				else
 					"#{line}\n"
-			GIT_HOOKS['pre-receive'] changes, req, res
+			req.git.hook 'pre-receive', changes
 			.then -> changes
 			.map (change) ->
-				GIT_HOOKS['update'] change, req, res
+				req.git.hook 'update', change
 				.then -> change
 				.catch (err) ->
 					res.write "Push to #{change.ref} rejected: #{err}"
@@ -76,7 +58,7 @@ module.exports = (app, options) ->
 				git = spawn GIT_EXEC, args, stdio: [buffer, "ignore", "pipe"]
 				git.process.stdout.pipe res, end: no
 				git.then ->
-					GIT_HOOKS['post-receive'] changes, res, res
+					req.git.hook 'post-receive', changes
 					.catch (err) -> res.write "Post-receive hook failed: #{err}"
 			.then ->
 				next res.end()
