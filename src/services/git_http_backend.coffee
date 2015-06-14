@@ -4,7 +4,7 @@ _path = require "path"
 Promise = require "bluebird"
 
 {PassThrough} = require "stream"
-{Monitor, GitUpdateRequest, ZERO_PKT_LINE} = require "../stream"
+{GitUpdateRequest, ZERO_PKT_LINE} = require "../stream"
 
 module.exports = (app, options={}) ->
 	GIT_EXEC = options?.git_executable or which "git"
@@ -25,13 +25,9 @@ module.exports = (app, options={}) ->
 			.catch next
 			return
 
-		out = new Monitor "RESPONSE"
-		stdin = new Monitor "STDIN"
-		out.pipe res
 		git_pack_stream = new GitUpdateRequest()
 		git_pack_stream.on "error", next
 		git_pack_stream.on "changes", (changes, capabilities) ->
-			console.log arguments
 			changeline = ({before, after, ref}) ->
 				line = [before, after, ref].join " "
 				if capabilities?
@@ -46,31 +42,29 @@ module.exports = (app, options={}) ->
 				req.git.hook 'update', change
 				.then -> change
 				.catch (err) ->
-					out.write "Push to #{change.ref} rejected: #{err}"
+					res.write "Push to #{change.ref} rejected: #{err}"
 					null
 			.then (changes) ->
 				changes = (c for c in changes when c?)
 				return unless changes.length > 0
 				git = spawn GIT_EXEC, args
-				git.process.stdout.pipe out, end: no
-				git.process.stderr.pipe out, end: no
-				stdin.pipe git.process.stdin
+				git.process.stdout.pipe res, end: no
+				git.process.stderr.pipe res, end: no
 				for change in changes
-					stdin.write changeline change
-				stdin.write ZERO_PKT_LINE
-				git_pack_stream.pipe stdin
+					git.process.stdin.write changeline change
+				git.process.stdin.write ZERO_PKT_LINE
+				git_pack_stream.pipe git.process.stdin
 				git
 				.then ->
 					req.git.hook 'post-receive', changes
-					.catch (err) -> out.write 'Post-receive hook failed'
+					.catch (err) -> res.write 'Post-receive hook failed'
 				.then ->
-					out.end()
+					res.end()
 					next()
 			.catch next
 
 		# Go git 'em!
-		mon = new Monitor "GITPACKSTREAM"
-		requestStream(req).pipe(mon).pipe git_pack_stream
+		requestStream(req).pipe git_pack_stream
 
 	# Ref advertisement for push/pull operations
 	# via git receive-pack/upload-pack commands

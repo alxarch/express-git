@@ -151,11 +151,26 @@ Object.defineProperty g.Revwalk::, 'repo',
 	get: -> @repository()
 
 g.Tree::toJSON = ->
-	id: @id()
-	path: @path()
-	entries: @entries().map(entry) ->
-		id: "#{entry.oid}"
-		filename: entry.filename
+	id: "#{@id()}"
+	type: "tree"
+	path: "#{@path()}"
+	entries: @entries().map (entry) ->
+		id: "#{entry.oid()}"
+		filename: "#{entry.filename()}"
 		type: if entry.isBlob() then "blob" else "tree"
+
+g.Signature::toJSON = ->
+	name: @name
+	email: @email
+g.Commit::toJSON = ->
+	id: "#{@id()}"
+	type: "commit"
+	tree: "#{@treeId()}"
+	parents: @parents().map (p) -> "#{p}"
+	date: @date()
+	committer: "#{@committer()}"
+	author: "#{@author()}"
+	header: "#{@rawHeader()}"
+	message: "#{@message()}"
 
 module.exports = g

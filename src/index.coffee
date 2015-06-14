@@ -141,7 +141,7 @@ expressGit.serve = (root, options) ->
 	if options.git_http_backend
 		expressGit.services.git_http_backend app, options
 	if options.serve_static
-		expressGit.services.blob app, options
+		expressGit.services.serve_static app, options
 
 	# Cleanup nodegit objects
 	app.use (req, res, next) ->

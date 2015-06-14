@@ -42,17 +42,8 @@ class GitUpdateRequest extends Transform
 				break
 		callback()
 
-class Monitor extends Transform
-	constructor: (@name, options) ->
-		super options
-	_transform: (chunk, encoding, callback) ->
-		console.dir "#{@name}: #{chunk}"
-		@push chunk
-		callback()
-
 module.exports = {
 	PACK
 	ZERO_PKT_LINE
 	GitUpdateRequest
-	Monitor
 }
