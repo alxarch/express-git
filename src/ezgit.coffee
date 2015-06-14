@@ -150,6 +150,12 @@ assign g.Repository::,
 Object.defineProperty g.Revwalk::, 'repo',
 	get: -> @repository()
 
+g.Blob::toJSON = ->
+	id: "#{@id()}"
+	size: "#{@rawsize()}"
+	binary: if @isBinary() then yes else no
+	filemode: "#{@filemode().toString 8}"
+
 g.Tree::toJSON = ->
 	id: "#{@id()}"
 	type: "tree"

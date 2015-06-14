@@ -14,6 +14,7 @@ EXPRESS_GIT_DEFAULTS =
 	hooks: {}
 	serve_static: yes
 	auto_init: yes
+	browse: yes
 	init_options: {}
 	pattern: /.*/
 	auth: null
@@ -140,14 +141,19 @@ expressGit.serve = (root, options) ->
 
 	if options.git_http_backend
 		expressGit.services.git_http_backend app, options
+	if options.browse
+		expressGit.services.browse app, options
+		expressGit.services.object app, options
 	if options.serve_static
-		expressGit.services.serve_static app, options
+		expressGit.services.raw app, options
 
+	
 	# Cleanup nodegit objects
 	app.use (req, res, next) ->
 		for obj in NODEGIT_OBJECTS when typeof obj?.free is "function"
 			obj.free()
 		next()
+	app.use app.errors.httpErrorHandler
 	app
 
 unless module.parent
@@ -157,7 +163,6 @@ unless module.parent
 	app.use require("morgan") "dev"
 	app.use expressGit.serve root
 	app.use (err, req, res, next) ->
-		console.dir err
 		console.error err.stack
 		next err
 	app.listen port, ->
