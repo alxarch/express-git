@@ -50,19 +50,16 @@ module.exports = (app, options={}) ->
 
 				buffer = new PassThrough()
 				pktlines = new GitPktLines()
-				pktlines.pipe buffer
+				pktlines.pipe buffer, end: no
 				for change in changes
 					pktlines.write changeline change
 				pktlines.end()
 				git_pack_stream.pipe buffer
-				git = spawn GIT_EXEC, args, stdio: [buffer, "ignore", "pipe"]
-				git.process.stdout.pipe res, end: no
-				git.then ->
+				spawn GIT_EXEC, args, stdio: [buffer, res, "pipe"]
+				.then ->
 					req.git.hook 'post-receive', changes
-					.catch (err) -> res.write "Post-receive hook failed: #{err}"
-			.then ->
-				next res.end()
-				next()
+					.catch (err) -> console.error err
+			.then -> next()
 			.catch next
 
 		# Go git 'em!

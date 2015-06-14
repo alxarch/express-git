@@ -150,4 +150,12 @@ assign g.Repository::,
 Object.defineProperty g.Revwalk::, 'repo',
 	get: -> @repository()
 
+g.Tree::toJSON = ->
+	id: @id()
+	path: @path()
+	entries: @entries().map(entry) ->
+		id: "#{entry.oid}"
+		filename: entry.filename
+		type: if entry.isBlob() then "blob" else "tree"
+
 module.exports = g

@@ -50,6 +50,7 @@ class GitPktLines extends Transform
 		callback()
 	_flush: (callback) ->
 		@push ZERO_PKT_LINE
+		callback()
 
 module.exports = {
 	PACK
