@@ -63,7 +63,7 @@ module.exports = (app, options) ->
 			git.Tree.lookup repo, oid
 			.then cleanup
 			.then (tree) ->
-				tree.path = -> path
+				tree.path = path
 				res.set
 					"Etag": id
 					"Cache-Control": "private, max-age=#{options.max_age}, no-transform, must-revalidate"

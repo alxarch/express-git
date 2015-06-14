@@ -153,7 +153,7 @@ Object.defineProperty g.Revwalk::, 'repo',
 g.Tree::toJSON = ->
 	id: "#{@id()}"
 	type: "tree"
-	path: "#{@path()}"
+	path: if typeof @path is "string" then @path else undefined
 	entries: @entries().map (entry) ->
 		id: "#{entry.oid()}"
 		filename: "#{entry.filename()}"
