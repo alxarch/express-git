@@ -15,7 +15,7 @@ module.exports = (app, options) ->
 		{oid} = req.params
 		if oid is req.headers['if-none-match']
 			return next new NotModified
-		repo.getBlob oid
+		repo.then (repo) -> repo.getBlob oid
 		.catch -> throw new NotFoundError
 		.then cleanup
 		.then (blob) ->
@@ -29,12 +29,18 @@ module.exports = (app, options) ->
 		.then -> next()
 		.catch next
 
-	app.get "/:git_repo(.*).git/:git_ref(.*)?/:git_service(raw)/:path(.*)", (req, res, next) ->
-		{cleanup, repo, ref} = req.git
-		{path} = req.params
+	app.get "/:git_repo(.*).git/:refname(.*)?/:git_service(raw)/:path(.*)", (req, res, next) ->
+		{cleanup, repo} = req.git
+		{path, refname} = req.params
 		etag = req.headers['if-none-match']
-		commit = if ref then repo.getCommit(ref.target()) else repo.getHeadCommit()
-		commit.then cleanup
+		repo.then (repo) ->
+			if refname
+				repo.getReference refname
+			else
+				repo.head()
+		.then cleanup
+		.then (ref) -> repo.getCommit ref.target()
+		.then cleanup
 		.then (commit) -> commit.getEntry path
 		.then cleanup
 		.then (entry) ->
