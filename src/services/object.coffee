@@ -12,11 +12,9 @@ module.exports = (app, options) ->
 	app.get "/:git_repo(.*).git/:git_service(object)/:oid([a-zA-Z0-9]{40})", (req, res, next) ->
 		{cleanup, repo} = req.git
 		{oid} = req.params
-		Promise.resolve oid
-		.then (oid) ->
-			if oid is req.headers["if-none-match"]
-				throw new NotModified
-			git.Object.lookup repo, oid, git.Object.TYPE.ANY
+		if oid is req.headers["if-none-match"]
+			return next new NotModified
+		repo.then (repo) -> git.Object.lookup repo, oid, git.Object.TYPE.ANY
 		.then cleanup
 		.then (obj) ->
 			switch obj.type()
