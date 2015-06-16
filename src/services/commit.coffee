@@ -3,12 +3,14 @@ Busboy = require "busboy"
 Promise = require "bluebird"
 _path = require "path"
 os = require "os"
+{createWriteStream} = require "fs"
 rimraf = Promise.promisify require "rimraf"
 mkdirp = Promise.promisify require "mkdirp"
 
 module.exports = (app, options) ->
+	{ConflictError, BadRequestError} = app.errors
 
-	app.post "/:git_repo(.*).git/:refname(.*)?/:git_service(commit)/:path(.*)", (req, res, next) ->
+	app.post "/:git_repo(.*).git/:refname(.*)?/:git_service(commit)/:path(.*)?", (req, res, next) ->
 		{repo, cleanup} = req.git
 		{refname, path} = req.params
 		etag = req.headers['x-commit-oid']
@@ -44,19 +46,18 @@ module.exports = (app, options) ->
 			repo.index()
 			.then cleanup
 			.then (index) ->
-				unless index.entries().length is 0
-					throw new ConflictError
+				index.clear()
 				index.readTree tree
 				index
 
-		workdir = _path.join os.tmp_dir(), "express-git-#{new Date().getTime()}"
+		workdir = _path.join os.tmpdir(), "express-git-#{new Date().getTime()}"
 		Promise.join repo, commit, index, mkdirp(workdir), (repo, parent, index) ->
-			repo.setWorkdir workdir
+			repo.setWorkdir workdir, 0
 			bb = new Busboy headers: req.headers
 			files = []
 			add = []
 			bb.on "file", (filepath, file) ->
-				filepath = _path.join path, filepath
+				filepath = _path.join (path or ""), filepath
 				dest = _path.join workdir, filepath
 				files.push new Promise (resolve, reject) ->
 					file.on "end", ->
@@ -74,6 +75,7 @@ module.exports = (app, options) ->
 					commit[fieldname] = value
 			
 			finish = new Promise (resolve) -> bb.on "finish", -> resolve()
+			req.pipe bb
 			finish
 			.then -> Promise.all files
 			.then ->
@@ -83,15 +85,17 @@ module.exports = (app, options) ->
 					index.addByPath a
 				index.writeTree()
 			.finally -> index.clear()
-			.then (tree) -> checkref()
-			.then (ref) ->
-				repo.commit
-					parents: [parent]
-					ref: ref
-					tree: tree
-					author: commit.author
-					commiter: commit.committer
-					message: committ.message
+			.then (tree) -> repo.getTree tree
+			.then cleanup
+			.then (tree) ->
+				checkref().then (ref) ->
+					repo.commit
+						parents: [parent]
+						ref: ref
+						tree: tree
+						author: commit.author
+						commiter: commit.committer
+						message: commit.message
 		.then (commit) -> res.json commit
 		.then -> next()
 		.catch next

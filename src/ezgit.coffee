@@ -1,4 +1,5 @@
 _path = require "path"
+Promise = require "bluebird"
 g = require "nodegit"
 {assign} = require "./helpers"
 
@@ -139,6 +140,31 @@ g.Revparse._single = g.Revparse.single
 g.Revparse.single = (repo, where) -> g.Revparse._single repo, @toSpec where
 
 assign g.Repository::,
+	commit: (options) ->
+		{ref, tree} = options
+		unless ref instanceof g.Reference
+			ref = @getReference "#{ref}"
+		unless tree instanceof g.Tree
+			tree = g.Tree.lookup @, g.Oid.fromString "#{tree}"
+
+		parents = Promise.map (options.parents or []), (parent) =>
+			if parent instanceof g.Commit
+				parent
+			else
+				@getCommit "#{parent}"
+				
+		message = options.message or "Commit #{new Date()}"
+
+		Promise.join ref, tree, parents, (ref, tree, parents) =>
+			author = @defaultSignature()
+			committer = @defaultSignature()
+			parent_count = parents.length
+			if parents.length is 0
+				parents = null
+			g.Commit.create @, ref.name(), author, committer, null, message, tree, parent_count, parents
+		.then (oid) =>
+			g.Commit.lookup @, oid
+
 	find: (where) -> g.Revparse.single @, where
 
 	createRef: (name, target, options={}) ->

@@ -36,6 +36,11 @@ class NotModified extends HttpError
 	name: "NotModified"
 	message: null
 
+class ConflictError extends HttpError
+	status: 409
+	name: "Conflict"
+	message: "Conflict"
+
 httpErrorHandler = (err, req, res, next) ->
 	status = parseInt err.status or err.statusCode
 	if status
@@ -65,4 +70,5 @@ module.exports = {
 	NonHttpError
 	httpErrorHandler
 	UnsupportedMediaTypeError
+	ConflictError
 }

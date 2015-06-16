@@ -15,6 +15,7 @@ EXPRESS_GIT_DEFAULTS =
 	serve_static: yes
 	auto_init: yes
 	browse: yes
+	accept_commits: yes
 	init_options: {}
 	pattern: /.*/
 	auth: null
@@ -85,7 +86,7 @@ expressGit.serve = (root, options) ->
 			repo.params = freeze a2o m[1..]
 			repo
 		git_dir = _path.join GIT_PROJECT_ROOT, reponame
-		git.Repository.open git_dir,
+		repo = git.Repository.open git_dir,
 			bare: yes
 			# Set the topmost dir to GIT_PROJECT_ROOT to avoid
 			# searching in it's parents for .git dirs
@@ -106,38 +107,17 @@ expressGit.serve = (root, options) ->
 		.then (repo) ->
 			unless repo?
 				throw new NotFoundError "Repository #{reponame} not found"
-			req.git = freeze req.git, {git_dir, repo}
-			next()
-		.catch next
+			repo
+		req.git = freeze req.git, {git_dir, repo}
+		next()
+
 
 	app.param "git_ref", (req, res, next, git_ref) ->
 		{repo} = req.git
-		unless repo instanceof git.Repository
-			return next new Error "No repository to lookup reference in"
-		repo.getReference git_ref
+		ref = repo.then (repo) -> repo.getReference git_ref
 		.then cleanup
-		.then (ref) ->
-			req.git = freeze req.git, {ref}
-			next()
 		.catch NonHttpError, (err) -> throw new NotFoundError err.message
-		.catch next
-
-	app.param "git_blob", (req, res, next, git_blob) ->
-		{repo} = req.git
-		unless repo instanceof git.Repository
-			return next new Error "No repository to lookup blob in"
-		repo.find git_blob
-		.then cleanup
-		.then (obj) ->
-			unless typeof obj is git.Object.TYPE.BLOB
-				throw new BadRequestError "Wrong  object type"
-			repo.getBlob obj.id()
-		.then cleanup
-		.then (blob) ->
-			req.git = freeze req.git, {blob}
-			next()
-		.catch NonHttpError, (err) -> throw new NotFoundError err.message
-		.catch next
+		req.git = freeze req.git, {ref}
 
 	if options.git_http_backend
 		expressGit.services.git_http_backend app, options
@@ -146,6 +126,8 @@ expressGit.serve = (root, options) ->
 		expressGit.services.object app, options
 	if options.serve_static
 		expressGit.services.raw app, options
+	if options.accept_commits
+		expressGit.services.commit app, options
 
 	
 	# Cleanup nodegit objects
