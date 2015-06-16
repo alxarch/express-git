@@ -10,23 +10,26 @@ module.exports = (app, options) ->
 
 	options = assign {}, SERVE_BLOB_DEFAULTS, options
 
-	app.get "/:git_repo(.*).git/:git_ref(.*)?/:git_service(browse)/:type(blob|tree|commit)/:path(.*)", (req, res, next) ->
-		{cleanup, repo, ref} = req.git
-		{path, type} = req.params
+	app.get "/:git_repo(.*).git/:refname(.*)?/:git_service(browse)/:type(blob|tree|commit)/:path(.*)?", (req, res, next) ->
+		{cleanup, repo} = req.git
+		{path, type, refname} = req.params
 		etag = req.headers["if-none-match"]
-		Promise.resolve ref
-		.then (ref) ->
-			if ref
-				if type is "commit" and "#{ref.target()}" is etag
-					throw new NotModified()
-				repo.getCommit ref.target()
+		repo.then (repo) ->
+			if refname
+				repo.getReference refname
 			else
-				repo.getHeadCommit()
+				repo.head()
+		.then cleanup
+		.then (ref) ->
+			if type is "commit" and "#{ref.target()}" is etag
+				throw new NotModified()
+			ref
+		.then (ref) -> repo.getCommit ref.target()
 		.then cleanup
 		.then (commit) ->
 			if type is "commit"
 				commit
-			else if path is "" and type is "tree"
+			else if not path and type is "tree"
 				if "#{commit.treeId()}" is etag
 					throw new NotModified()
 				commit.getTree()
