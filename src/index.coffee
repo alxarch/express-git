@@ -1,4 +1,4 @@
-{a2o, spawn, assign, freeze} = require "./helpers"
+{httpify, a2o, spawn, assign, freeze} = require "./helpers"
 Promise = require "bluebird"
 
 {mkdir, test} = require "shelljs"
@@ -53,91 +53,61 @@ expressGit.serve = (root, options) ->
 
 	app.disable "etag"
 
+	app.hook = (name, args...) ->
+		(req, res, next) ->
+			GIT_HOOKS[name].apply {req, res}, args
+			.then -> next()
+			.catch next
+
+	app.authorize = (name) ->
+		(req, res, next) ->
+			GIT_AUTH.call {req, res}, name
+			.then -> next()
+			.catch next
+
+	app.cacheHeaders = (object) ->
+		"Etag": "#{object.id()}"
+		"Cache-Control": "private, max-age=#{options.max_age}, no-transform, must-revalidate"
+
 	app.use (req, res, next) ->
-		hook = (name, args...) -> GIT_HOOKS[name]?.apply {req, res}, args
-		auth = (args...) -> GIT_AUTH.apply {req, res}, args
-		req.git = freeze req.git, {cleanup, hook, auth}
-		next()
+		authorize = (name) -> GIT_AUTH.call {req, res}, name
+		hook = (name, args...) -> GIT_HOOKS[name].apply {req, res}, args
+		NODEGIT_OBJECTS = []
+		using = NODEGIT_OBJECTS.push.bind NODEGIT_OBJECTS
+		open = (name, init=options.auto_init) ->
+			m = "#{name.replace /\.git$/, ''}".match options.pattern
+			decorate = (repo) -> assign repo, {name, params}
+			unless m?
+				return decorate Promise.reject new NotFoundError "Repository not found"
+			
+			params = m[1..]
+			git_dir = _path.join GIT_PROJECT_ROOT, name
 
-	app.param "git_service", (req, res, next, service) ->
-		if service is "info/refs" and req.method is "GET"
-			{service} = req.query
-			if service in ["git-upload-pack", "git-receive-pack"]
-				service = service.replace "git-", ""
-			else
-				return next new BadRequestError "Invalid service #{service}"
+			decorate git.Repository.open git_dir,
+				bare: yes
+				ceilings: [GIT_PROJECT_ROOT]
+			.then decorate
+			.catch (err) ->
+				throw err unless init and not test "-e", git_dir
 
-		req.git.auth service
-		.then ->
-			req.git = freeze req.git, {service}
-			next()
-		.catch NonHttpError, (err) -> throw new UnauthorizedError err.message
-		.catch next
-
-	app.param "git_repo", (req, res, next, reponame) ->
-		reponame = reponame.replace /\.git$/, ''
-		m = "#{reponame}".match options.pattern
-		unless m?
-			return next new NotFoundError "Repository not found"
-		decorateRepo = (repo) ->
-			# TODO: use path-to-regexp for named params
-			repo.name = reponame
-			repo.params = freeze a2o m[1..]
-			repo
-		git_dir = _path.join GIT_PROJECT_ROOT, reponame
-		git.Repository.open git_dir,
-			bare: yes
-			# Set the topmost dir to GIT_PROJECT_ROOT to avoid
-			# searching in it's parents for .git dirs
-			ceilings: [GIT_PROJECT_ROOT]
-		.then decorateRepo
-		.catch (err) ->
-			if options.auto_init and not test "-e", git_dir
-				req.git.hook "pre-init", reponame
-				.then (init_options) -> git.Repository.init git_dir, init_options or GIT_INIT_OPTIONS or {}
-				.then decorateRepo
+				hook "pre-init", name
+				.then (init_options) ->
+					git.Repository.init git_dir, init_options or GIT_INIT_OPTIONS or {}
+				.then decorate
 				.then (repo) ->
-					req.git.hook "post-init", repo
+					hook "post-init", repo
 					.then -> repo
-			else
-				null
-		.catch NonHttpError, -> null
-		.then cleanup
-		.then (repo) ->
-			unless repo?
-				throw new NotFoundError "Repository #{reponame} not found"
-			req.git = freeze req.git, {git_dir, repo}
-			next()
-		.catch next
+					.catch -> repo
+			.then using
+			.catch httpify 404
 
-	app.param "git_ref", (req, res, next, git_ref) ->
-		{repo} = req.git
-		unless repo instanceof git.Repository
-			return next new Error "No repository to lookup reference in"
-		repo.getReference git_ref
-		.then cleanup
-		.then (ref) ->
-			req.git = freeze req.git, {ref}
-			next()
-		.catch NonHttpError, (err) -> throw new NotFoundError err.message
-		.catch next
-
-	app.param "git_blob", (req, res, next, git_blob) ->
-		{repo} = req.git
-		unless repo instanceof git.Repository
-			return next new Error "No repository to lookup blob in"
-		repo.find git_blob
-		.then cleanup
-		.then (obj) ->
-			unless typeof obj is git.Object.TYPE.BLOB
-				throw new BadRequestError "Wrong  object type"
-			repo.getBlob obj.id()
-		.then cleanup
-		.then (blob) ->
-			req.git = freeze req.git, {blob}
-			next()
-		.catch NonHttpError, (err) -> throw new NotFoundError err.message
-		.catch next
+		refopen = (reponame, refname, callback) ->
+			repo = open reponame, no
+			ref = repo.then (repo) -> if refname then repo.getReference refname else repo.head()
+			Promise.join repo, ref.then(using), callback
+		
+		req.git = freeze req.git, {using, hook, authorize, open, refopen, NODEGIT_OBJECTS}
+		next()
 
 	if options.git_http_backend
 		expressGit.services.git_http_backend app, options
@@ -146,14 +116,14 @@ expressGit.serve = (root, options) ->
 		expressGit.services.object app, options
 	if options.serve_static
 		expressGit.services.raw app, options
-
 	
 	# Cleanup nodegit objects
 	app.use (req, res, next) ->
-		for obj in NODEGIT_OBJECTS when typeof obj?.free is "function"
-			obj.free()
+		for obj in req.git.NODEGIT_OBJECTS when typeof obj?.free is "function"
+			try
+				obj.free()
 		next()
-	app.use app.errors.httpErrorHandler
+
 	app
 
 unless module.parent
