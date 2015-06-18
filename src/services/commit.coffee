@@ -6,45 +6,43 @@ os = require "os"
 {createWriteStream} = require "fs"
 rimraf = Promise.promisify require "rimraf"
 mkdirp = Promise.promisify require "mkdirp"
+git = require "../ezgit"
 
 module.exports = (app, options) ->
 	{ConflictError, BadRequestError} = app.errors
 
-	app.post "/:git_repo(.*).git/:refname(.*)?/:git_service(commit)/:path(.*)?", (req, res, next) ->
-		{repo, cleanup} = req.git
-		{refname, path} = req.params
-		etag = req.headers['x-commit-oid']
+	app.post "/:reponame(.*).git/:refname(.*)?/commit/:path(.*)?", app.authorize("commit"), (req, res, next) ->
+		{using, open} = req.git
+		{reponame, refname, path} = req.params
+		etag = req.headers['x-commit-oid'] or "#{git.Oid.ZERO}"
+		repo = open reponame
 		checkref = ->
 			repo.then (repo) ->
 				if refname
-					repo.getReference(refname) 
+					repo.getReference refname
 				else
 					repo.head()
-			.then cleanup
+			.then using
 			.then (ref) ->
 				unless "#{ref.target()}" is etag
 					throw new ConflictError
 				ref
 		commit = Promise.join repo, checkref(), (repo, ref) ->
-			repo.getCommit ref.target()
-			.then cleanup
+			using repo.getCommit ref.target()
 	
 		tree = commit
-			.then (commit) -> commit.getTree()
-			.then cleanup
+			.then (commit) -> using commit.getTree()
 			.then (tree) ->
 				return tree unless path
-				tree.entryByPath path
-				.then cleanup
-				.catch null
+				using tree.entryByPath path
 				.then (entry) ->
-					if entry? and entry.isBlob()
+					if entry.isBlob()
 						throw new BadRequestError()
 					tree
+				.catch -> tree
 
 		index = Promise.join repo, tree, (repo, tree) ->
-			repo.index()
-			.then cleanup
+			using repo.index()
 			.then (index) ->
 				index.clear()
 				index.readTree tree
@@ -85,11 +83,10 @@ module.exports = (app, options) ->
 					index.addByPath a
 				index.writeTree()
 			.finally -> index.clear()
-			.then (tree) -> repo.getTree tree
-			.then cleanup
+			.then (tree) -> using repo.getTree tree
 			.then (tree) ->
 				checkref().then (ref) ->
-					repo.commit
+					using repo.commit
 						parents: [parent]
 						ref: ref
 						tree: tree

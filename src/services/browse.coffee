@@ -9,47 +9,44 @@ module.exports = (app, options) ->
 	{BadRequestError, NotModified} = app.errors
 
 	options = assign {}, SERVE_BLOB_DEFAULTS, options
-
-	app.get "/:git_repo(.*).git/:refname(.*)?/:git_service(browse)/:type(blob|tree|commit)/:path(.*)?", (req, res, next) ->
-		{cleanup, repo} = req.git
-		{path, type, refname} = req.params
+	app.get "/:reponame(.*).git/:refname(.*)?/browse/:type(blob|tree|commit)/:path(.*)?",  (req, res, next) ->
+		{using, open} = req.git
+		{reponame, path, type, refname} = req.params
 		etag = req.headers["if-none-match"]
-		repo.then (repo) ->
+		auth "browse"
+		.then -> open reponame
+		.then (repo) -> 
 			if refname
 				repo.getReference refname
 			else
 				repo.head()
-		.then cleanup
+		.then using
 		.then (ref) ->
 			if type is "commit" and "#{ref.target()}" is etag
 				throw new NotModified()
-			ref
-		.then (ref) -> repo.getCommit ref.target()
-		.then cleanup
+			using repo.getCommit ref.target()
 		.then (commit) ->
 			if type is "commit"
 				commit
 			else if not path and type is "tree"
 				if "#{commit.treeId()}" is etag
 					throw new NotModified()
-				commit.getTree()
-				.then cleanup
+				using commit.getTree()
 			else if path
-				commit.getEntry path
-				.then cleanup
+				using commit.getEntry path
 				.then (entry) ->
 					if type is "tree"
 						unless entry.isTree()
 							throw new BadRequestError
 						if etag is "#{entry.oid()}"
 							throw new NotModified
-						entry.getTree().then cleanup
+						uning entry.getTree()
 					else if type is "blob"
 						unless entry.isBlob()
 							throw new BadRequestError
 						if etag is "#{entry.oid()}"
 							throw new NotModified
-						entry.getBlob().then cleanup
+						using entry.getBlob()
 					else
 						throw new BadRequestError
 			else
@@ -59,5 +56,5 @@ module.exports = (app, options) ->
 				"Etag": "#{obj.id()}"
 				"Cache-Control": "private, max-age=#{options.max_age}, no-transform, must-revalidate"
 			res.json obj
-		.then -> next()
+			next()
 		.catch next

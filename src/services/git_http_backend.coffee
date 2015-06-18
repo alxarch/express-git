@@ -9,16 +9,19 @@ Promise = require "bluebird"
 module.exports = (app, options={}) ->
 	GIT_EXEC = options?.git_executable or which "git"
 
-	app.post ":git_repo(.*).git/git-:git_service(receive-pack|upload-pack)", (req, res, next) ->
-		{repo, git_dir, service} = req.git
-		res.set
-			'Pragma': 'no-cache'
-			'Expires': (new Date '1900').toISOString()
-			'Cache-Control': 'no-cache, max-age=0, must-revalidate'
-			'Content-Type': "application/x-git-#{service}-result"
+	app.post ":reponame(.*).git/git-:service(receive-pack|upload-pack)", (req, res, next) ->
+		{service, reponame} = req.params
+		{open, hook, auth} = req.git
 
-		args = [service, '--stateless-rpc', git_dir]
-		repo.then (repo) ->
+		auth service
+		.then -> open reponame
+		.then (repo) ->
+			res.set
+				'Pragma': 'no-cache'
+				'Expires': (new Date '1900').toISOString()
+				'Cache-Control': 'no-cache, max-age=0, must-revalidate'
+				'Content-Type': "application/x-git-#{service}-result"
+			args = [service, '--stateless-rpc', repo.path()]
 			unless service is "receive-pack"
 				stdio = [requestStream(req), res, "pipe"]
 				return spawn GIT_EXEC, args, {stdio}
@@ -33,10 +36,10 @@ module.exports = (app, options={}) ->
 						pktline line
 					else
 						pktline "#{line}\n"
-				req.git.hook 'pre-receive', changes
+				hook 'pre-receive', changes
 				.then -> changes
 				.map (change) ->
-					req.git.hook 'update', change
+					hook 'update', change
 					.then -> change
 					.catch (err) ->
 						res.write "Push to #{change.ref} rejected: #{err}"
@@ -53,7 +56,7 @@ module.exports = (app, options={}) ->
 					git_pack_stream.pipe git.process.stdin
 					git
 					.then ->
-						req.git.hook 'post-receive', changes
+						hook 'post-receive', changes
 						.catch (err) -> res.write 'Post-receive hook failed'
 					.then -> res.end()
 			requestStream(req).pipe git_pack_stream
@@ -64,18 +67,28 @@ module.exports = (app, options={}) ->
 
 	# Ref advertisement for push/pull operations
 	# via git receive-pack/upload-pack commands
-	app.get "/:git_repo(.*).git/:git_service(info/refs)", (req, res, next) ->
-		{service, git_dir} = req.git
-		res.set
-			'Pragma': 'no-cache'
-			'Expires': (new Date '1900').toISOString()
-			'Cache-Control': 'no-cache, max-age=0, must-revalidate'
-			'Content-Type': "application/x-git-#{service}-advertisement"
-		res.write pktline "# service=git-#{service}\n"
-		res.write ZERO_PKT_LINE
-		args = [service, '--stateless-rpc', '--advertise-refs', git_dir]
-		stdio = ['ignore', res, 'pipe']
-		spawn GIT_EXEC, args, {stdio}
+	app.get "/:reponame(.*).git/info/refs", (req, res, next) ->
+		{service} = req.query
+		if service in ["git-receive-pack", "git-upload-pack"]
+			service = service.replace "git-", ""
+		else
+			return next new BadRequestError "Invalid service"
+
+		{reponame} = req.params
+		{auth, open} = req.git
+		auth service
+		.then -> open reponame
+		.then (repo) ->
+			res.set
+				'Pragma': 'no-cache'
+				'Expires': (new Date '1900').toISOString()
+				'Cache-Control': 'no-cache, max-age=0, must-revalidate'
+				'Content-Type': "application/x-git-#{service}-advertisement"
+			res.write pktline "# service=git-#{service}\n"
+			res.write ZERO_PKT_LINE
+			args = [service, '--stateless-rpc', '--advertise-refs', repo.path()]
+			stdio = ['ignore', res, 'pipe']
+			spawn GIT_EXEC, args, {stdio}
 		.catch next
 
 	app

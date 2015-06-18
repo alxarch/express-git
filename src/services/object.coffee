@@ -9,13 +9,21 @@ module.exports = (app, options) ->
 
 	options = assign {}, SERVE_BLOB_DEFAULTS, options
 
-	app.get "/:git_repo(.*).git/:git_service(object)/:oid([a-zA-Z0-9]{40})", (req, res, next) ->
-		{cleanup, repo} = req.git
-		{oid} = req.params
-		if oid is req.headers["if-none-match"]
+	app.get "/:reponame(.*).git/object/:oid([a-zA-Z0-9]{40})", (req, res, next) ->
+		{using, open, auth} = req.git
+		{oid, reponame} = req.params
 			return next new NotModified
-		repo.then (repo) -> git.Object.lookup repo, oid, git.Object.TYPE.ANY
-		.then cleanup
+		auth "object"
+		.then ->
+			if oid is req.headers["if-none-match"]
+				throw new NotModified
+			open reponame
+		.then (repo) ->
+			unless repo?
+				throw new NotFoundError "Repository #{reponame} not found"
+			using git.Object.lookup repo, oid, git.Object.TYPE.ANY
+		.catch (err) ->
+			throw new NotFoundError "#{err.message or err}"
 		.then (obj) ->
 			switch obj.type()
 				when git.Object.TYPE.COMMIT
@@ -26,7 +34,7 @@ module.exports = (app, options) ->
 					repo.getTree obj.id()
 				else
 					throw new BadRequestError
-		.then cleanup
+		.then using
 		.then (obj) ->
 			res.set
 				"Etag": oid
@@ -34,4 +42,3 @@ module.exports = (app, options) ->
 			res.json obj
 		.then -> next()
 		.catch next
-

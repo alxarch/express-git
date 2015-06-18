@@ -28,12 +28,19 @@ EXPRESS_GIT_DEFAULT_HOOKS =
 
 expressGit.serve = (root, options) ->
 	options = assign {}, options, EXPRESS_GIT_DEFAULTS
+	{NonHttpError, NotFoundError, BadRequestError, UnauthorizedError} = errors = require "./errors"
 	unless options.pattern instanceof RegExp
 		options.pattern = new Regexp "#{options.pattern or '.*'}"
 	if typeof options.auth is "function"
 		GIT_AUTH = Promise.promisify options.auth
 	else
-		GIT_AUTH = -> Promise.resolve null
+		GIT_AUTH = -> Promise.resolve()
+	
+	app.authorize = (service) ->
+		(req, res, next) ->
+			GIT_AUTH.call {req, res}, service
+			.then -> next()
+			.catch next
 
 	GIT_PROJECT_ROOT = _path.resolve "#{root}"
 	GIT_INIT_OPTIONS = freeze options.init_options
@@ -44,80 +51,87 @@ expressGit.serve = (root, options) ->
 		assign {}, EXPRESS_GIT_DEFAULT_HOOKS, hooks
 
 	app = express()
+	app.errors = errors
 
-	{NonHttpError, NotFoundError, BadRequestError, UnauthorizedError} = app.errors = require "./errors"
 
 	NODEGIT_OBJECTS = []
+	using = app.using = (obj) ->
+		if obj instanceof git.Promise or obj instanceof Promise
+			return obj.then using
+		else if obj?
+			NODEGIT_OBJECTS.push obj
+		obj
 	cleanup = (obj) ->
-		NODEGIT_OBJECTS.push obj
+		if obj?
+			NODEGIT_OBJECTS.push obj
 		obj
 
 	app.disable "etag"
-
-	app.use (req, res, next) ->
-		hook = (name, args...) -> GIT_HOOKS[name]?.apply {req, res}, args
-		auth = (args...) -> GIT_AUTH.apply {req, res}, args
-		req.git = freeze req.git, {cleanup, hook, auth}
-		next()
-
-	app.param "git_service", (req, res, next, service) ->
-		if service is "info/refs" and req.method is "GET"
-			{service} = req.query
-			if service in ["git-upload-pack", "git-receive-pack"]
-				service = service.replace "git-", ""
-			else
-				return next new BadRequestError "Invalid service #{service}"
-
-		req.git.auth service
-		.then ->
-			req.git = freeze req.git, {service}
-			next()
-		.catch NonHttpError, (err) -> throw new UnauthorizedError err.message
-		.catch next
-
-	app.param "git_repo", (req, res, next, reponame) ->
+	app.hook = -> throw new Error "Cannot trigger a hook out of a request"
+	app.auth = -> throw new Error "Cannot authorize an action out of a request"
+	app.open =  (reponame, auto_init=options.auto_init) ->
 		reponame = reponame.replace /\.git$/, ''
 		m = "#{reponame}".match options.pattern
-		unless m?
-			return next new NotFoundError "Repository not found"
-		decorateRepo = (repo) ->
-			# TODO: use path-to-regexp for named params
+		decorate = (repo) ->
+			return repo unless repo?
 			repo.name = reponame
-			repo.params = freeze a2o m[1..]
+			repo.params = params
+			repo.git_dir = git_dir
 			repo
+		unless m?
+			return Promise.reject new BadRequestError "Repository name '#{reponame}' is invalid"
 		git_dir = _path.join GIT_PROJECT_ROOT, reponame
-		repo = git.Repository.open git_dir,
+		# TODO: use path-to-regexp for named params
+		params = freeze a2o m[1..]
+
+		decorate git.Repository.open git_dir,
 			bare: yes
 			# Set the topmost dir to GIT_PROJECT_ROOT to avoid
 			# searching in it's parents for .git dirs
 			ceilings: [GIT_PROJECT_ROOT]
-		.then decorateRepo
 		.catch (err) ->
-			if options.auto_init and not test "-e", git_dir
-				req.git.hook "pre-init", reponame
-				.then (init_options) -> git.Repository.init git_dir, init_options or GIT_INIT_OPTIONS or {}
-				.then decorateRepo
-				.then (repo) ->
-					req.git.hook "post-init", repo
-					.then -> repo
+			if not auto_init or test "-e", git_dir
+				throw err
+
+			hook "pre-init", reponame
+			.then (init_options) ->
+				git.Repository.init git_dir, init_options or GIT_INIT_OPTIONS or {}
+			.then (repo) ->
+				hook "post-init", repo
+				.then -> repo
+		.then (repo) -> using decorate repo
+		.catch httpify 404
+
+	app.refopen = (reponame, refname, callback) ->
+		repo = open reponame, no
+		ref = repo.then (repo) ->
+			if refname
+				repo.getReference refname
 			else
-				null
-		.catch NonHttpError, -> null
-		.then cleanup
-		.then (repo) ->
-			unless repo?
-				throw new NotFoundError "Repository #{reponame} not found"
-			repo
-		req.git = freeze req.git, {git_dir, repo}
+				do repo.head
+		.then using
+		.catch httpify 404
+		Promise.join repo, ref, callback
+
+	app.use (req, res, next) ->
+		res.cacheHeaders = (object) ->
+			res.set
+				"Etag": "#{object.id()}"
+				"Cache-Control": "private, max-age=#{options.max_age}, no-transform, must-revalidate"
+
+		res.blob = (blob, path) ->
+			res.cacheHeaders blob
+			res.set
+				"Content-Type": mime.lookup(path) or "application/octet-stream"
+				"Content-Length": blob.rawsize()
+			res.end blob.content()
+
+		app.hook = (name, args...) -> GIT_HOOKS[name]?.apply {req, res}, args
+
+
+		authorize = (service) -> GIT_AUTH.call {req, res}, service
+		req.git = freeze req.git, {refopen, authorize, hook, open, using}
 		next()
-
-
-	app.param "git_ref", (req, res, next, git_ref) ->
-		{repo} = req.git
-		ref = repo.then (repo) -> repo.getReference git_ref
-		.then cleanup
-		.catch NonHttpError, (err) -> throw new NotFoundError err.message
-		req.git = freeze req.git, {ref}
 
 	if options.git_http_backend
 		expressGit.services.git_http_backend app, options
@@ -133,7 +147,8 @@ expressGit.serve = (root, options) ->
 	# Cleanup nodegit objects
 	app.use (req, res, next) ->
 		for obj in NODEGIT_OBJECTS when typeof obj?.free is "function"
-			obj.free()
+			try
+				obj.free()
 		next()
 	app.use app.errors.httpErrorHandler
 	app

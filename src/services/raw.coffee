@@ -10,46 +10,46 @@ module.exports = (app, options) ->
 
 	options = assign {}, SERVE_BLOB_DEFAULTS, options
 
-	app.get "/:git_repo(.*).git/:git_service(raw)/:oid([a-zA-Z0-9]{40})", (req, res, next) ->
-		{cleanup, repo} = req.git
-		{oid} = req.params
-		if oid is req.headers['if-none-match']
-			return next new NotModified
-		repo.then (repo) -> repo.getBlob oid
-		.catch -> throw new NotFoundError
-		.then cleanup
+	app.get "/:reponame(.*).git/raw/:oid([a-zA-Z0-9]{40})", app.authorize("raw"), (req, res, next) ->
+		{using, auth, open} = req.git
+		{oid, reponame} = req.params
+		auth "raw"
+		.then ->
+			if oid is req.headers['if-none-match']
+				throw new NotModified
+			open reponame
+		.then (repo) -> using repo.getBlob oid
+		.catch -> throw new NotFoundError "Blob not found"
 		.then (blob) ->
 			res.set
 				"Etag": "#{blob.id()}"
 				"Cache-Control": "private, max-age=#{options.max_age}, no-transform, must-revalidate"
-				"Content-Type": mime.lookup(path) or "application/octet-stream"
+				"Content-Type": "application/octet-stream"
 				"Content-Length": blob.rawsize()
 			res.write blob.content()
 			res.end()
 		.then -> next()
 		.catch next
 
-	app.get "/:git_repo(.*).git/:refname(.*)?/:git_service(raw)/:path(.*)", (req, res, next) ->
-		{cleanup, repo} = req.git
-		{path, refname} = req.params
-		etag = req.headers['if-none-match']
-		repo.then (repo) ->
+	app.get "/:reponame(.*).git/:refname(.*)?/raw/:path(.*)", app.authorize("raw"), (req, res, next) ->
+		{auth, open, using} = req.git
+		{reponame, path, refname} = req.params
+		auth "raw"
+		.then -> open reponame
+		.then (repo) ->
 			if refname
-				repo.getReference refname
+				using repo.getReference refname
 			else
-				repo.head()
-		.then cleanup
-		.then (ref) -> repo.getCommit ref.target()
-		.then cleanup
-		.then (commit) -> commit.getEntry path
-		.then cleanup
+				using repo.head()
+		.then (ref) -> using repo.getCommit ref.target()
+		.then (commit) -> using commit.getEntry path
 		.then (entry) ->
 			unless entry.isBlob()
 				throw new BadRequestError "Path is not a blob"
+			etag = req.headers['if-none-match']
 			if "#{entry.oid()}" is etag
 				throw new NotModified
-			entry.getBlob()
-		.then cleanup
+			using entry.getBlob()
 		.then (blob) ->
 			res.set
 				"Etag": "#{blob.id()}"
