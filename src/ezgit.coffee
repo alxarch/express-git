@@ -1,4 +1,5 @@
 _path = require "path"
+Promise = require "bluebird"
 g = require "nodegit"
 {assign} = require "./helpers"
 
@@ -139,6 +140,36 @@ g.Revparse._single = g.Revparse.single
 g.Revparse.single = (repo, where) -> g.Revparse._single repo, @toSpec where
 
 assign g.Repository::,
+	commit: (options) ->
+		{ref, tree} = options
+		if ref instanceof g.Reference
+			ref = ref.name()
+		else if ref
+			ref = "#{ref}"
+		else
+			ref = null
+
+		unless tree instanceof g.Tree
+			tree = g.Tree.lookup @, g.Oid.fromString "#{tree}"
+
+		parents = Promise.resolve (options.parents or []).filter (a) -> a
+		.map (parent) =>
+			if parent instanceof g.Commit
+				parent
+			else
+				@getCommit "#{parent}"
+				
+		message = options.message or "Commit #{new Date()}"
+
+		Promise.join ref, tree, parents, (ref, tree, parents) =>
+			author = @defaultSignature()
+			committer = @defaultSignature()
+			parent_count = parents.length
+			console.dir parents
+			g.Commit.create @, ref, author, committer, null, message, tree, parent_count, parents
+		.then (oid) =>
+			g.Commit.lookup @, oid
+
 	find: (where) -> g.Revparse.single @, where
 
 	createRef: (name, target, options={}) ->
@@ -149,5 +180,34 @@ assign g.Repository::,
 
 Object.defineProperty g.Revwalk::, 'repo',
 	get: -> @repository()
+
+g.Blob::toJSON = ->
+	id: "#{@id()}"
+	size: "#{@rawsize()}"
+	binary: if @isBinary() then yes else no
+	filemode: "#{@filemode().toString 8}"
+
+g.Tree::toJSON = ->
+	id: "#{@id()}"
+	type: "tree"
+	path: if typeof @path is "string" then @path else undefined
+	entries: @entries().map (entry) ->
+		id: "#{entry.oid()}"
+		filename: "#{entry.filename()}"
+		type: if entry.isBlob() then "blob" else "tree"
+
+g.Signature::toJSON = ->
+	name: @name
+	email: @email
+g.Commit::toJSON = ->
+	id: "#{@id()}"
+	type: "commit"
+	tree: "#{@treeId()}"
+	parents: @parents().map (p) -> "#{p}"
+	date: @date()
+	committer: "#{@committer()}"
+	author: "#{@author()}"
+	header: "#{@rawHeader()}"
+	message: "#{@message()}"
 
 module.exports = g

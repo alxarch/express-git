@@ -1,107 +1,91 @@
-{socket, assign, spawn, pkt_line} = require "../helpers"
+{requestStream, assign, spawn, pktline} = require "../helpers"
 {which} = require "shelljs"
 _path = require "path"
-uuid = require "uuid"
 Promise = require "bluebird"
 
-GIT_HTTP_BACKEND_DEFAULTS =
-	hooks: {}
-	hooks_socket: socket()
-	git_executable: which "git"
+{PassThrough} = require "stream"
+{GitUpdateRequest, ZERO_PKT_LINE} = require "../stream"
 
-createHookServer = Promise.promisify (socket, next) ->
-	{createServer} = require "net"
-	srv = createServer {pauseOnConnect: yes}, (conn) ->
-		callback = (err) ->
-			code = new Buffer [
-				if err then (parseInt(err) or 1) else 0
-			]
-			conn.write code
+module.exports = (app, options={}) ->
+	GIT_EXEC = options?.git_executable or which "git"
+	headers = (service, type='result') ->
+		'Pragma': 'no-cache'
+		'Expires': (new Date '1900').toISOString()
+		'Cache-Control': 'no-cache, max-age=0, must-revalidate'
+		'Content-Type': "application/x-git-#{service.replace 'git-', ''}-#{type}"
 
-		conn.on "readable", () ->
-			data = conn.read()
-			unless data?
-				return callback()
-			try
-				{id, name, changes} = JSON.parse "#{data}"
-			catch err
-				return callback 4
+	app.post ":repo(.*).git/git-upload-pack", app.authorize("upload-pack"), (req, res, next) ->
+		res.set headers "upload-pack"
+		req.git.open req.params.repo
+		.then (repo) ->
+			args = ['upload-pack', '--stateless-rpc', repo.path()]
+			spawn GIT_EXEC, args, stdio: [req, res, res]
+		.then -> next()
+		.catch next
 
+	app.post ":repo(.*).git/git-receive-pack", app.authorize("receive-pack"), (req, res, next) ->
+		{hook, open} = req.git
+		res.set headers "receive-pack"
+		repo = open req.params.repo
+		pack = new Promise (resolve, reject) ->
+			git = new GitUpdateRequest()
+			git.on "error", reject
+			git.on "changes", ->
+				git.removeListener "error", reject
+				resolve git
+			requestStream(req).pipe git
+		Promise.join repo, pack, (repo, pack) ->
+			{capabilities, changes} = pack
+			changeline = ({before, after, ref}) ->
+				line = [before, after, ref].join " "
+				if capabilities
+					line = "#{line}\0#{capabilities}"
+					capabilities = null
+				pktline "#{line}\n"
 
-			try
-				srv.emit "#{id}:#{name}", changes, callback
-			catch err
-				console.error err.stack
-				callback 3
-	socket = parseInt(socket) or _path.resolve "#{socket}"
-	try
-		srv.listen socket, -> next null, srv
-	catch err
-		next err
+			hook 'pre-receive', changes
+			.then -> changes
+			.map (change) ->
+				hook 'update', changes
+				.then -> change
+				.catch -> null
+			.then (changes) ->
 
-module.exports = (app, options) ->
-	options = assign {}, GIT_HTTP_BACKEND_DEFAULTS, options
+				changes = (c for c in changes when c?)
+				return unless changes.length > 0
+				git = spawn GIT_EXEC, ["receive-pack", "--stateless-rpc", repo.path()]
 
-	GIT_EXEC = options.git_executable
+				{stdin, stdout, stderr} = git.process
+				stdout.pipe res, end: no
+				stderr.pipe res, end: no
+				for change in changes
+					stdin.write changeline change
+				stdin.write ZERO_PKT_LINE
 
-	if options.hooks
-		GIT_HOOK_SOCKET = options.hooks_socket
-		# Initialize the hooks server
-		hooks = createHookServer GIT_HOOK_SOCKET
+				pack.pipe stdin
 
-		# Setup the EXPRESS_GIT_HOOK env var passed to hook scripts
-		hook = require.resolve '../hook'
-		EXPRESS_GIT_HOOK = [hook]
-		# Allow ".coffee" extensions for development
-		if ".coffee" is _path.extname hook
-			EXPRESS_GIT_HOOK.unshift require.resolve "coffee-script/register"
-		EXPRESS_GIT_HOOK = EXPRESS_GIT_HOOK.join _path.delimiter
-	else
-		hooks = Promise.resolve no
-
-	app.post ":git_repo(.*).git/git-:git_service(receive-pack|upload-pack)", (req, res, next) ->
-		{repo, service} = req.git
-		res.set
-			'Pragma': 'no-cache'
-			'Expires': (new Date '1900').toISOString()
-			'Cache-Control': 'no-cache, max-age=0, must-revalidate'
-			'Content-Type': "application/x-git-#{service}-result"
-		hooks.then (hooks) ->
-			env = {}
-			if hooks and service is "receive-pack"
-				GIT_HOOK_ID = uuid.v4()
-				env = {EXPRESS_GIT_HOOK, GIT_HOOK_SOCKET, GIT_HOOK_ID}
-				{post_receive, pre_receive} = options
-
-				if typeof pre_receive is "function"
-					# Respond only after pre-receive hook
-					hooks.once "#{GIT_HOOK_ID}:pre-receive", (changes, callback) ->
-						req.git = freeze req.git, {changes}
-						pre_receive req, res, callback
-
-				if typeof post_receive is "function"
-					hooks.once "#{GIT_HOOK_ID}:post-receive", (changes, callback) ->
-						req.git = freeze req.git, {changes}
-						post_receive req, res, callback
-
-			args = [service, '--stateless-rpc', repo.path()]
-			stdio = [req, res, 'pipe']
-			spawn GIT_EXEC, args, {env, stdio}
+				git
+			.then -> hook 'post-receive', changes
+		.finally -> res.end()
+		.then -> next()
 		.catch next
 
 	# Ref advertisement for push/pull operations
 	# via git receive-pack/upload-pack commands
-	app.get "/:git_repo(.*).git/:git_service(info/refs)", (req, res, next) ->
-		{service, git_dir} = req.git
-		res.set
-			'Pragma': 'no-cache'
-			'Expires': (new Date '1900').toISOString()
-			'Cache-Control': 'no-cache, max-age=0, must-revalidate'
-			'Content-Type': "application/x-git-#{service}-advertisement"
-		res.write pkt_line "# service=git-#{service}\n0000"
-		args = [service, '--stateless-rpc', '--advertise-refs', git_dir]
-		stdio = ['ignore', res, 'pipe']
-		spawn GIT_EXEC, args, {stdio}
-		.catch next
+	app.get "/:repo(.*).git/info/refs", app.authorize("advertise-refs"), (req, res, next) ->
+		{service} = req.query
 
-	app
+		unless service in ["git-receive-pack", "git-upload-pack"]
+			return next new BadRequestError
+
+		service = service.replace 'git-', ''
+
+		req.git.open req.params.repo
+		.then (repo) ->
+			res.set headers service, "advertisement"
+			res.write pktline "# service=git-#{service}\n"
+			res.write ZERO_PKT_LINE
+			args = [service, '--stateless-rpc', '--advertise-refs', repo.path()]
+			spawn GIT_EXEC, args, stdio: ['ignore', res, 'pipe']
+		.then -> next()
+		.catch next

@@ -1,4 +1,3 @@
-# express-git
 Express middleware that acts as a git-http-backend
 
 Usage:
@@ -11,15 +10,19 @@ var app = express();
 app.use("/git", expressGit.serve("path/torepos/", {
 	auto_init: true,
 	serve_static: true,
-	auth: function (req, res, next, service) {
+	auth: function (service, next) {
+		// Authorize a service
+		// this.req holds the request object
+		// this.res holds the response object
+
 		next();
 	},
-	git_http_backend: {
-		hooks: {
-			'post-receive': function (req, res, next, changes) {
-				// Do something after a push
-				next();
-			}
+	hooks: {
+		'post-receive': function (changes, next) {
+			// Do something after a push
+			// this.req holds the request object
+			// this.res holds the response object
+			next();
 		}
 	}
 });
@@ -53,24 +56,58 @@ Enable the [git_http_backend service](#git_http_backend-service).
 
 If set to `false` push/pull operations will not be possible over `http`.
 
-If set to an `object` it will be used as [git_http_backend.options](#git_http_backend-options).
-
 ### options.serve_static
 
 > default: true
 
-Enable the [blob service](#blob-service).
+Enable the [raw service](#raw-service).
 
-### options.auth
+### options.browse
+
+> default: true
+
+Enable the [browse service](#browse-service).
+
+
+### options.allow_commits
+
+> default: true
+
+Enable the [commit service](#commit-service).
+
+####  options.hooks
+
+> default: {}
+
+Set to and object with key-value pairs of hook - callback.
+All hook callbacks take a callback as the last argument for
+asynchronous hook logic.
+All hook callbacks will be bound to an object so that
+`this.req` is the request object and
+`this.res` is the response object.
+
+The currenctly implemented hooks are
+
+- `pre-init: (repo, callback)` Where `repo` is the name of the repo to be created.
+Specify individual repo `init_options` with `callback(null, options)`. See [Init Options](#init-options).
+Prevent the initialization of the repo by passing an error to the callback.
+
+- `post-init: (repo, callback)` Where `repo` is a `nodegit.Repository` object for the new repo.
+
+- `pre-receive: (changes, callback)` Where `changes` is an `Array` of `{before, after, ref}` objects. Passing an error to the callback will prevent the push request.
+
+- `update: (change, callback)` Where `change` is a `{before, after, ref}` object. Passing an error to the callback will prevent the push for this specific ref.
+
+- `post-receive: (changes, callback)` Where `changes` is an `Array` of `{before, after, ref}` objects. Any error passed to the callback will be reported to the client but will not prevent the request.
+
+See [Git Hooks][Git Hooks] for more info.
+
+### options.authorize
 
 > default: noop
 
-A middleware-like `(req, res, next, service)` callback to use to authorize requests.
-All git-related parameters are assigned to `req.git` object.
-
-To prevent an action the callback should throw an error that will trigger a
-401 error response with the body set to the error's message.
-
+A `(service, callback)` hook to use to authorize requests.
+As with hooks `this.req` and `this.res` will be bound to the request and response objects. To prevent an action, pass an error to the callback.
 
 ### options.pattern
 
@@ -88,46 +125,33 @@ for use in `options.auth`.
 Allow repos to be created on-demand.
 
 If set to `false` only already existing repos will be used.
-Use [options.auth](#optionsauth) and [options.pattern](#optionspattern) to control the creation of
-new repos.
 
-If set to an `object` it will be used as init_options for
-new repos.
+### options.init_options
 
-#### options.auto_init.bare
+> default: {}
 
-> default: true
+Default `init_options` for new repos. See [Init options](#init-options)
+To override per-repo init_options use `hooks['pre-init']`.
 
-#### options.auto_init.mkdir
+### options.max_age
 
-> default: true
+> default: A year in seconds
 
-Create the dir for the repository if does not exist
+The `max_age` `Cache-Control` header to use for served blobs
 
-#### options.auto_init.mkdirp
 
-> default: true
+### options.max_size
 
-Create the all required dirs for the repository path
+> default: 2K
 
-#### options.auto_init.shared
+The max size of truncated blob data to include in [browse](#browse-service) requests.
 
-> default: null
+### options.git_executable
 
-Permission mask to apply to the repository dir (git init --shared)
+> default: `shelljs.which('git')`
 
-#### options.auto_init.head
-
-> default: 'master'
-
-The branch to which HEAD will point.
-
-#### options.auto_init.origin
-
-> default: null
-
-A default origin remote to use for this remote.
-Usually not needed as the repo will probably act as origin for others.
+For `git_http_backend` service to work you need git installed on the server.
+You can specify the git executable to use with the `git_executable` option.
 
 
 ## Services
@@ -137,65 +161,17 @@ Usually not needed as the repo will probably act as origin for others.
 Allow push/pull over http at
 
 ```
-/path/to/repo.git
+GET /path/to/repo.git/info/refs?service=(git-receive-pack|git-upload-pack)
+POST /path/to/repo.git/(git-receive-pack|git-upload-pack)
 ```
 
-### git_http_backend options
 
-####  git_http_backend.options.hooks
-
-> default: false
-
-Set to and object with key-value pairs of hook - callback.
-
-The currenctly implemented hooks are
-
-- `pre-receive: (req, res, next, changes)` With signature: `(req, res, next, changes)` where `changes` is an `Array` of `{before, after, ref}` objects. Passing an error to the `next` callback will effectively abort the push request. Use `res.write` to write info to the git client's `remote` output.
-
-- `post-receive` With signature: `(req, res, next, changes)` where `changes` is an `Array` of `{before, after, ref}` objects. Use `res.write` to write info to the git client's `remote` output.
-
-See [Server-Side Hooks][ServerSideHooks] for more info.
-
-> #### How express-git handles hooks
->
-> Git hooks normally are scripts running from the `GIT_DIR/hooks` dir.
-> This is a difficult to configure method especially in the
-> context of a web application where a lot of configuration
-> bootstrap code would have to be replicated and reused in
-> the hook script. And to make things worse per-request
-> customization is practically impossible. Unless...
->
-> #### Hook callbacks
->
-> In order to overcome the above mentioned problems, express-git
-> creates an ad-hoc tcp server where the hook scripts connect to
-> passing their stdin to middleware-like `(req, res, next)`
-> callbacks from the web application and uses the outcome
-> of those callbacks to control the hook exit code.
-
-
-
-#### git_http_backend.options.hooks_socket
-
-> default: random port between 10000 and 14000 on windows or
-> temporary socket file at `/tmp/express-git-TIMESTAMP.sock` on a proper OS.
-
-Where the hook server should listen for hook script connections.
-
-#### git_http_backend.options.git_exec
-
-> default: `shelljs.which('git')`
-
-For `git_http_backend` to work you need git installed on the server.
-You can specify the git executable to use with the `git_exec` option.
-
-
-## `blob` service
+## `raw` service
 
 Serve blobs from any ref at
 
 ```
-/path/to/repo.git/(ref?)/blob/path/to/file.txt
+GET /path/to/repo.git/(ref?)/raw/path/to/file.txt
 ```
 
 The default ref is `HEAD`.
@@ -208,13 +184,87 @@ must revalidate the freshness on each request.
 See [HTTP Cache Headers](http://www.mobify.com/blog/beginners-guide-to-http-cache-headers/) for more info.
 
 
-### blob options
+## `browse` service
 
-#### blob.options.max_age
+Browse repositories as json
 
-> default: A year in seconds
+```
+GET /path/to/repo.git/(ref?)/blob/(path/to/file.txt)
+GET /path/to/repo.git/(ref?)/tree/(path/to/dir)?
+GET /path/to/repo.git/(ref?)/commit/
+GET /path/to/repo.git/(ref?)/object/(object-id)
+```
 
-The max_age Cache-Control header to use for served blobs
+The default ref is `HEAD`.
+
+
+## `commit` service
+
+Git commits using multipart forms
+
+```
+POST /path/to/repo.git/(ref?)/commit/(path/to/basepath)?parent=(object-id)
+```
+
+> Commit parent id should either be specified by an `x-parent-id` header
+> or the `parent` query parameter. It will default to the empty object id (40 zeros)
+
+If the provided parent id is not the current target of the ref,
+the commit will be rejected with a `409 Confict` error response.
+
+### Form fields
+
+**message** The commit message
+
+**remove** (can repeated be multiple times) The paths to remove (stemming from basepath if provided). Removals occur before additions.
+
+### File fields
+
+All form file fields will be added, using the fieldname as path (stemming from basepath if provided).
+
+
+## Init options
+
+### init_options.bare
+
+> default: true
+
+### init_options.mkdir
+
+> default: true
+
+Create the dir for the repository if does not exist
+
+### init_options.mkdirp
+
+> default: true
+
+Create the all required dirs for the repository path
+
+### init_options.shared
+
+> default: null
+
+Permission mask to apply to the repository dir (git init --shared)
+
+### init_options.head
+
+> default: 'master'
+
+The branch to which HEAD will point.
+
+### init_options.origin
+
+> default: null
+
+A default origin remote to use for this remote.
+Usually not needed as the repo will probably act as origin for others.
+
+### init_options.template
+
+> default: null
+
+A GIT_TEMPLATE_PATH to use for the repo.
 
 
 ## The `req.git` object
@@ -222,13 +272,14 @@ The max_age Cache-Control header to use for served blobs
 Each request handled by express-git is assigned a frozen object `git` property with
 the following properties:
 
-### `req.git.project_root`
+### `req.git.hook`
 
-The base dir for all repos managed by this middleware
+A `(name, args...)` function trigerring hooks
 
-### `req.git.reponame`
 
-The reponame for the current request relative to `git.project_root`
+### `req.git.repo`
+
+The current repository for this request
 
 ### `req.git.service`
 
@@ -236,20 +287,20 @@ The service name for this request
 
 Possible service names are:
 
- - `blob` for raw file requests (if `options.serve_static` is enabled)
+ - `raw` for raw file requests (if `options.serve_static` is enabled)
+ - `browse` for json browsing of the repos  (if `options.browse` is enabled)
+ - `commit` for commits over http  (if `options.allow_commits` is enabled)
  - `receive-pack` for push requests
  - `upload-pack` for fetch requests
- - `init` for creating a non-existing repo (if `options.auto_init` is enabled)
+ - `advertise-refs` for ref advertisement before push/pull requests
 
-### `req.git.rev`
+### `req.git.auth`
 
-The git [revision][revisions] for this request
+A `(service)` callback for authorising services.
 
 ### `req.git.path`
 
 The path relative to the repo root for this request
 
-
-[RepoInitOptions]: http://www.nodegit.org/api/repository_init_options/
-[ServerSideHooks]: https://git-scm.com/book/en/v2/Customizing-Git-Git-Hooks#Server-Side-Hooks
+[Git Hooks]: http://git-scm.com/docs/githooks
 [revisions]: https://git-scm.com/docs/revisions
