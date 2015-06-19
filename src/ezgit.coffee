@@ -187,6 +187,13 @@ g.Blob::toJSON = ->
 	binary: if @isBinary() then yes else no
 	filemode: "#{@filemode().toString 8}"
 
+g.TreeEntry::toJSON = ->
+	id: @oid()
+	path: @path()
+	type: if @isBlob() then "blob" else "tree"
+	filename: @filename()
+	attr: @attr().toString 8
+
 g.Tree::toJSON = ->
 	id: "#{@id()}"
 	type: "tree"
@@ -199,6 +206,7 @@ g.Tree::toJSON = ->
 g.Signature::toJSON = ->
 	name: @name
 	email: @email
+
 g.Commit::toJSON = ->
 	id: "#{@id()}"
 	type: "commit"

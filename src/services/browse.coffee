@@ -92,8 +92,9 @@ module.exports = (app, options) ->
 				res.set app.cacheHeaders tree
 				res.json
 					type: "tree"
+					id: "#{tree.id()}"
 					name: _path.basename path
 					path: path
-					id: "#{tree.id()}"
+					entries: (entry.toJSON() for entry in tree.entries())
 				next()
 			.catch next
