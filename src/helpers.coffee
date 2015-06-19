@@ -73,8 +73,8 @@ module.exports =
 		size = line.length + 4
 		head = "0000#{size.toString 16}".substr -4, 4
 		new Buffer "#{head}#{line}"
-	httpify: (code=500) ->
+	httpify: (status=500) ->
 		(err) ->
-			err.code ?= code
+			err.status ?= status
 			throw err
 
