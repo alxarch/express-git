@@ -7,10 +7,10 @@ os = require "os"
 {createWriteStream} = require "fs"
 rimraf = Promise.promisify require "rimraf"
 mkdirp = Promise.promisify require "mkdirp"
-git = require "../ezgit"
 
 module.exports = (app, options) ->
 	{ConflictError, BadRequestError} = app.errors
+	{git} = app
 
 	app.post "/:reponame(.*).git/:refname(.*)?/commit/:path(.*)?", app.authorize("commit"), (req, res, next) ->
 		{using, open} = req.git
@@ -19,27 +19,29 @@ module.exports = (app, options) ->
 		repo = open reponame
 		checkref = ->
 			repo.then (repo) ->
-				if refname
+				if repo.isEmpty()
+					null
+				else if refname
 					repo.getReference refname
 				else
 					repo.head()
-			.then using
 			.catch httpify 404
+			.then using
 			.then (ref) ->
-				unless "#{ref.target()}" is etag
+				if ref? and "#{ref.target()}" isnt etag
 					throw new ConflictError
 				ref
 
 		commit = Promise.join repo, checkref(), (repo, ref) ->
-			repo.getCommit ref.target()
+			if ref then repo.getCommit ref.target() else null
 		.then using
 	
 		tree = commit
-			.then (commit) -> commit.getTree()
+			.then (commit) -> commit?.getTree()
 			.then using
 			.then (tree) ->
 				return tree unless path
-				tree.entryByPath path
+				tree?.entryByPath path
 				.then using
 				.then (entry) ->
 					if entry.isBlob()
@@ -53,7 +55,8 @@ module.exports = (app, options) ->
 			.then using
 			.then (index) ->
 				index.clear()
-				index.readTree tree
+				if tree
+					index.readTree tree
 				index
 
 		workdir = _path.join os.tmpdir(), "express-git-#{new Date().getTime()}"
@@ -97,7 +100,7 @@ module.exports = (app, options) ->
 				checkref().then (ref) ->
 					repo.commit
 						parents: [parent]
-						ref: ref
+						ref: "#{ref or refname or 'HEAD'}"
 						tree: tree
 						author: commit.author
 						commiter: commit.committer

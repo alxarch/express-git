@@ -142,12 +142,18 @@ g.Revparse.single = (repo, where) -> g.Revparse._single repo, @toSpec where
 assign g.Repository::,
 	commit: (options) ->
 		{ref, tree} = options
-		unless ref instanceof g.Reference
-			ref = @getReference "#{ref}"
+		if ref instanceof g.Reference
+			ref = ref.name()
+		else if ref
+			ref = "#{ref}"
+		else
+			ref = null
+
 		unless tree instanceof g.Tree
 			tree = g.Tree.lookup @, g.Oid.fromString "#{tree}"
 
-		parents = Promise.map (options.parents or []), (parent) =>
+		parents = Promise.resolve (options.parents or []).filter (a) -> a
+		.map (parent) =>
 			if parent instanceof g.Commit
 				parent
 			else
@@ -159,9 +165,8 @@ assign g.Repository::,
 			author = @defaultSignature()
 			committer = @defaultSignature()
 			parent_count = parents.length
-			if parents.length is 0
-				parents = null
-			g.Commit.create @, ref.name(), author, committer, null, message, tree, parent_count, parents
+			console.dir parents
+			g.Commit.create @, ref, author, committer, null, message, tree, parent_count, parents
 		.then (oid) =>
 			g.Commit.lookup @, oid
 
