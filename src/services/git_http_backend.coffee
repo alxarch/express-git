@@ -43,10 +43,10 @@ module.exports = (app, options={}) ->
 					capabilities = null
 				pktline "#{line}\n"
 
-			hook 'pre-receive', changes
+			hook 'pre-receive', repo, changes
 			.then -> changes
 			.map (change) ->
-				hook 'update', changes
+				hook 'update', repo, changes
 				.then -> change
 				.catch -> null
 			.then (changes) ->
@@ -65,7 +65,7 @@ module.exports = (app, options={}) ->
 				pack.pipe stdin
 
 				git
-			.then -> hook 'post-receive', changes
+			.then -> hook 'post-receive', repo, changes
 		.finally -> res.end()
 		.then -> next()
 		.catch next

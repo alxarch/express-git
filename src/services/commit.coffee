@@ -31,8 +31,9 @@ module.exports = (app, options) ->
 				if ref? and "#{ref.target()}" isnt etag
 					throw new ConflictError
 				ref
+		ref = checkref()
 
-		commit = Promise.join repo, checkref(), (repo, ref) ->
+		commit = Promise.join repo, ref, (repo, ref) ->
 			if ref then repo.getCommit ref.target() else null
 		.then using
 
@@ -60,7 +61,7 @@ module.exports = (app, options) ->
 				index
 
 		workdir = _path.join os.tmpdir(), "express-git-#{new Date().getTime()}"
-		Promise.join repo, commit, index, mkdirp(workdir), (repo, parent, index) ->
+		Promise.join repo, ref, commit, index, mkdirp(workdir), (repo, ref, parent, index) ->
 			repo.setWorkdir workdir, 0
 			bb = new Busboy headers: req.headers
 			files = []
@@ -97,24 +98,33 @@ module.exports = (app, options) ->
 			.then (tree) -> repo.getTree tree
 			.then using
 			.then (tree) ->
-				checkref().then (ref) ->
-					author =
-						if commit.author
-						then git.Signature.create commit.author, new Date commit.created_at
-						else repo.defaultSignature()
-					committer =
-						if commit.committer
-						then git.Signature.create commit.committer, new Date()
-						else git.Signature.create author, new Date()
+				author =
+					if commit.author
+					then git.Signature.create commit.author, new Date commit.created_at
+					else repo.defaultSignature()
+				committer =
+					if commit.committer
+					then git.Signature.create commit.committer, new Date()
+					else git.Signature.create author, new Date()
 
-					repo.commit
-						parents: [parent]
-						ref: "#{ref or refname or 'HEAD'}"
-						tree: tree
-						author: author.toJSON()
-						commiter: committer.toJSON()
-						message: message.toJSON()
-		.then using
+				parents: [parent]
+				ref: "#{ref or refname or 'HEAD'}"
+				tree: tree
+				author: author.toJSON()
+				commiter: committer.toJSON()
+				message: message.toJSON()
+			.then (commit) ->
+				hook['pre-commit'] repo, commit
+				.then -> checkref()
+				.then -> repo.commit commit
+			.then using
+			.then (commit) ->
+				hook['update'] repo,
+					before: "#{etag}"
+					after: "#{commit.id()}"
+					ref: "#{ref or refname or 'HEAD'}"
+				.then -> commit
+				.catch -> commit
 		.then (commit) -> next null, res.json commit
 		.catch next
 		.finally -> rimraf workdir
