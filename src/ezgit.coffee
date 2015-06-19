@@ -152,6 +152,9 @@ assign g.Repository::,
 		unless tree instanceof g.Tree
 			tree = g.Tree.lookup @, g.Oid.fromString "#{tree}"
 
+		author = g.Signature.create options.author
+		committer = g.Signature.create options.committer
+
 		parents = Promise.resolve (options.parents or []).filter (a) -> a
 		.map (parent) =>
 			if parent instanceof g.Commit
@@ -162,10 +165,9 @@ assign g.Repository::,
 		message = options.message or "Commit #{new Date()}"
 
 		Promise.join ref, tree, parents, (ref, tree, parents) =>
-			author = @defaultSignature()
-			committer = @defaultSignature()
+			author ?= @defaultSignature()
+			committer ?= @defaultSignature()
 			parent_count = parents.length
-			console.dir parents
 			g.Commit.create @, ref, author, committer, null, message, tree, parent_count, parents
 		.then (oid) =>
 			g.Commit.lookup @, oid
@@ -203,9 +205,77 @@ g.Tree::toJSON = ->
 		filename: "#{entry.filename()}"
 		type: if entry.isBlob() then "blob" else "tree"
 
+trim = (value) -> if typeof value is "string" then value.replace /(^[<\s]+|[\s>]+$)/g, "" else value
+
+g.Time.parse = (date) ->
+	d = new Date date
+	time = d.getTime()
+	unless time
+		d = new Date()
+		time = d.getTime()
+	offset = d.getTimezoneOffset()
+	time = time / 1000 | 0
+	{time, offset}
+
+g.Signature._create = g.Signature.create
+g.Signature.create = (args...) ->
+	switch args.length
+		when 4
+			[name, email, time, offset] = args
+		when 3
+			[name, email, date] = args
+			{time, offset} = g.Time.parse date
+		when 2
+			[signature, date] = args
+			{time, offset} = g.Time.parse date
+			if typeof signature is "string"
+				{name, email} = g.Signature.parse signature
+			else if signature instanceof g.Signature
+				name = signature.name()
+				email = signature.email()
+			else if typeof signature is "object"
+				{name, email} = signature
+		when 1
+			[signature] = args
+			if signature instanceof g.Signature
+				return signature
+			else if typeof signature is "string"
+				{name, email} = g.Signature.parse signature
+				{time, offset} = g.Time.parse null
+			else if typeof signature is "object"
+				{name, email, date} = signature
+				{time, offset} = g.Time.parse date
+	time = parseInt time
+	offset = parseInt offset
+	name = trim name
+	email = trim email
+	unless name and time and offset
+		throw new TypeError "Invalid signature arguments"
+	g.Signature._create name, email, time, offset
+
+g.Signature.parse = (signature) ->
+	m = "#{signature}".match /^([^<]+)(?:<([^>]+)>)?$/
+	unless m?
+		throw new TypeError "Cannot parse signature"
+	[name, email] = m[1..]
+	{name, email}
+
+g.Signature.fromString = (signature, date) ->
+	{name, email} = @parse signature
+	{time, offset} = g.Time.parse date
+	email = trim email
+	name = trim name
+	@create name, email, time, offset
+
+g.Signature::getDate() = ->
+	d = new Date()
+	d.setTime @when().time * 1000
+	d
+
 g.Signature::toJSON = ->
-	name: @name
-	email: @email
+	name: @name()
+	email: @email()
+	date: @getDate()
 
 g.Commit::toJSON = ->
 	id: "#{@id()}"

@@ -216,6 +216,9 @@ the commit will be rejected with a `409 Confict` error response.
 
 **message** The commit message
 
+**author** The commit author (accepts `name <email>` format)
+**committer** The committer (accepts `name <email>` format), fallback to author
+**created_at** The of the commit creation (author date)
 **remove** (can repeated be multiple times) The paths to remove (stemming from basepath if provided). Removals occur before additions.
 
 ### File fields

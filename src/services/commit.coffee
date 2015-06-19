@@ -98,13 +98,22 @@ module.exports = (app, options) ->
 			.then using
 			.then (tree) ->
 				checkref().then (ref) ->
+					author =
+						if commit.author
+						then git.Signature.create commit.author, new Date commit.created_at
+						else repo.defaultSignature()
+					committer =
+						if commit.committer
+						then git.Signature.create commit.committer, new Date()
+						else git.Signature.create author, new Date()
+
 					repo.commit
 						parents: [parent]
 						ref: "#{ref or refname or 'HEAD'}"
 						tree: tree
-						author: commit.author
-						commiter: commit.committer
-						message: commit.message
+						author: author.toJSON()
+						commiter: committer.toJSON()
+						message: message.toJSON()
 		.then using
 		.then (commit) -> next null, res.json commit
 		.catch next
