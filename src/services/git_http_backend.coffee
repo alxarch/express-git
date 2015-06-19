@@ -19,7 +19,7 @@ module.exports = (app, options={}) ->
 		req.git.open req.params.repo
 		.then (repo) ->
 			args = ['upload-pack', '--stateless-rpc', repo.path()]
-			spawn GIT_EXEC, args stdio: [req, res, res]
+			spawn GIT_EXEC, args, stdio: [req, res, res]
 		.then -> next()
 		.catch next
 
@@ -32,7 +32,7 @@ module.exports = (app, options={}) ->
 			git.on "error", reject
 			git.on "changes", ->
 				git.removeListener "error", reject
-				resolve git 
+				resolve git
 			requestStream(req).pipe git
 		Promise.join repo, pack, (repo, pack) ->
 			{capabilities, changes} = pack
@@ -46,44 +46,44 @@ module.exports = (app, options={}) ->
 			hook 'pre-receive', changes
 			.then -> changes
 			.map (change) ->
-	
+				hook 'update', changes
 				.then -> change
-				.catch req.git.-> null
+				.catch -> null
 			.then (changes) ->
-	
+
 				changes = (c for c in changes when c?)
 				return unless changes.length > 0
-				git = spawn GIT_EXEC, ["receive-pack", "--stateless-rpc", repo.req.git.path()]
-				
+				git = spawn GIT_EXEC, ["receive-pack", "--stateless-rpc", repo.path()]
+
 				{stdin, stdout, stderr} = git.process
 				stdout.pipe res, end: no
 				stderr.pipe res, end: no
 				for change in changes
 					stdin.write changeline change
 				stdin.write ZERO_PKT_LINE
-				
+
 				pack.pipe stdin
-				
+
 				git
-		.then -> hook 'post-receive', changes
+			.then -> hook 'post-receive', changes
 		.finally -> res.end()
 		.then -> next()
 		.catch next
-		
+
 	# Ref advertisement for push/pull operations
 	# via git receive-pack/upload-pack commands
 	app.get "/:repo(.*).git/info/refs", app.authorize("advertise-refs"), (req, res, next) ->
 		{service} = req.query
-		
+
 		unless service in ["git-receive-pack", "git-upload-pack"]
 			return next new BadRequestError
-	
+
 		service = service.replace 'git-', ''
 
 		req.git.open req.params.repo
 		.then (repo) ->
 			res.set headers service, "advertisement"
-			res.write pktline "# service=#{service}\n"
+			res.write pktline "# service=git-#{service}\n"
 			res.write ZERO_PKT_LINE
 			args = [service, '--stateless-rpc', '--advertise-refs', repo.path()]
 			spawn GIT_EXEC, args, stdio: ['ignore', res, 'pipe']

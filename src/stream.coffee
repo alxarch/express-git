@@ -3,33 +3,6 @@
 ZERO_PKT_LINE = new Buffer "0000"
 PACK = new Buffer "PACK"
 
-incoming.on "changes", (changes, capabilities) ->
-	changeline = ({before, after, ref}) ->
-		line = [before, after, ref].join " "
-		if capabilities
-			line = "#{line}\0#{capabilities}"
-			capabilities = null
-		"#{line}\n"
-
-	hook "pre-receive", changes
-	.then -> changes
-	.map (change) ->
-		hook "update", change
-		.then -> change
-		.catch -> null
-	.then -> (c for c in changes when c?)
-	.then (changes) ->
-		return unless changes.length
-		git = spawn GIT_EXEC, args
-		{stdin, stdout, stderr} = git.process
-		for c in changes
-
-			if capabilities then ""
-				stdin.write pktline if capabilities then ""
-
-			git.process.stdin.write pktline change
-		git.process.stdin.writwriteChanges changes, capabilities
-
 class GitUpdateRequest extends Transform
 	constructor: ->
 		super
@@ -54,7 +27,7 @@ class GitUpdateRequest extends Transform
 				@buffer = null
 				@pos = -1
 				break
-			
+
 			offset = parseInt "#{head}", 16
 			if offset > 0
 				@pos += offset

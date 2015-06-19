@@ -2,6 +2,7 @@
 Busboy = require "busboy"
 Promise = require "bluebird"
 _path = require "path"
+{httpify} = require "../helpers"
 os = require "os"
 {createWriteStream} = require "fs"
 rimraf = Promise.promisify require "rimraf"
@@ -23,26 +24,33 @@ module.exports = (app, options) ->
 				else
 					repo.head()
 			.then using
+			.catch httpify 404
 			.then (ref) ->
 				unless "#{ref.target()}" is etag
 					throw new ConflictError
 				ref
+
 		commit = Promise.join repo, checkref(), (repo, ref) ->
-			using repo.getCommit ref.target()
+			repo.getCommit ref.target()
+		.then using
 	
 		tree = commit
-			.then (commit) -> using commit.getTree()
+			.then (commit) -> commit.getTree()
+			.then using
 			.then (tree) ->
 				return tree unless path
-				using tree.entryByPath path
+				tree.entryByPath path
+				.then using
 				.then (entry) ->
 					if entry.isBlob()
 						throw new BadRequestError()
 					tree
 				.catch -> tree
+			.then using
 
 		index = Promise.join repo, tree, (repo, tree) ->
-			using repo.index()
+			repo.index()
+			.then using
 			.then (index) ->
 				index.clear()
 				index.readTree tree
@@ -83,18 +91,19 @@ module.exports = (app, options) ->
 					index.addByPath a
 				index.writeTree()
 			.finally -> index.clear()
-			.then (tree) -> using repo.getTree tree
+			.then (tree) -> repo.getTree tree
+			.then using
 			.then (tree) ->
 				checkref().then (ref) ->
-					using repo.commit
+					repo.commit
 						parents: [parent]
 						ref: ref
 						tree: tree
 						author: commit.author
 						commiter: commit.committer
 						message: commit.message
-		.then (commit) -> res.json commit
-		.then -> next()
+		.then using
+		.then (commit) -> next null, res.json commit
 		.catch next
 		.finally -> rimraf workdir
 		.catch -> null

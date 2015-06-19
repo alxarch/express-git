@@ -13,11 +13,13 @@ EXPRESS_GIT_DEFAULTS =
 	git_http_backend: yes
 	hooks: {}
 	serve_static: yes
+	accept_commits: yes
 	auto_init: yes
 	browse: yes
 	init_options: {}
 	pattern: /.*/
 	auth: null
+
 EXPRESS_GIT_DEFAULT_HOOKS =
 	'pre-init': Promise.resolve
 	'post-init': Promise.resolve
@@ -43,13 +45,9 @@ expressGit.serve = (root, options) ->
 		assign {}, EXPRESS_GIT_DEFAULT_HOOKS, hooks
 
 	app = express()
+	app.git = git
 
 	{NonHttpError, NotFoundError, BadRequestError, UnauthorizedError} = app.errors = require "./errors"
-
-	NODEGIT_OBJECTS = []
-	cleanup = (obj) ->
-		NODEGIT_OBJECTS.push obj
-		obj
 
 	app.disable "etag"
 
@@ -73,13 +71,15 @@ expressGit.serve = (root, options) ->
 		authorize = (name) -> GIT_AUTH.call {req, res}, name
 		hook = (name, args...) -> GIT_HOOKS[name].apply {req, res}, args
 		NODEGIT_OBJECTS = []
-		using = NODEGIT_OBJECTS.push.bind NODEGIT_OBJECTS
+		using = (obj) ->
+			NODEGIT_OBJECTS.push obj
+			obj
 		open = (name, init=options.auto_init) ->
 			m = "#{name.replace /\.git$/, ''}".match options.pattern
 			decorate = (repo) -> assign repo, {name, params}
 			unless m?
 				return decorate Promise.reject new NotFoundError "Repository not found"
-			
+
 			params = m[1..]
 			git_dir = _path.join GIT_PROJECT_ROOT, name
 
@@ -103,20 +103,26 @@ expressGit.serve = (root, options) ->
 
 		refopen = (reponame, refname, callback) ->
 			repo = open reponame, no
-			ref = repo.then (repo) -> if refname then repo.getReference refname else repo.head()
+			ref = repo.then (re) ->
+				if refname
+					re.getReference refname
+				else
+					re.head()
 			Promise.join repo, ref.then(using), callback
-		
+
 		req.git = freeze req.git, {using, hook, authorize, open, refopen, NODEGIT_OBJECTS}
 		next()
 
-	if options.git_http_backend
-		expressGit.services.git_http_backend app, options
 	if options.browse
 		expressGit.services.browse app, options
 		expressGit.services.object app, options
+	if options.accept_commits
+		expressGit.services.commit app, options
 	if options.serve_static
 		expressGit.services.raw app, options
-	
+	if options.git_http_backend
+		expressGit.services.git_http_backend app, options
+
 	# Cleanup nodegit objects
 	app.use (req, res, next) ->
 		for obj in req.git.NODEGIT_OBJECTS when typeof obj?.free is "function"
@@ -136,4 +142,4 @@ unless module.parent
 		console.error err.stack
 		next err
 	app.listen port, ->
-		console.log "Express git serving #{root} on port #{9000}"
+		console.log "Express git serving #{root} on port #{port}"

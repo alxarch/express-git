@@ -1,19 +1,20 @@
+{httpify} = require "../helpers"
 module.exports = (app, options) ->
 	{git} = app
-	{NotModified, BadRequestError} = app.errors
-
-	app.get "/:repo(.*).git/api/object/:oid([a-zA-Z0-9]{40})",
-		app.authorize "api/object",
+	{BadRequestError, NotModified} = app.errors
+	app.get "/:repo(.*).git/object/:oid([a-zA-Z0-9]{40})",
+		app.authorize "browse"
 		(req, res, next) ->
 			{repo, oid} = req.params
+			{using, open} = req.git
 			if oid is req.headers["if-none-match"]
 				return next new NotModified
-			req.git.open repo, no
+
+			open repo, no
 			.then (repo) -> git.Object.lookup repo, oid
 			.then using
-			.catch httpize 404
 			.then (object) ->
-				switch object.type() 
+				switch object.type()
 					when BLOB
 						git.Blob.lookup repo, oid
 					when TREE
@@ -23,6 +24,7 @@ module.exports = (app, options) ->
 					else
 						throw new BadRequestError
 			.then using
+			.catch httpify 404
 			.then (object) ->
 				res.set app.cacheHeaders object
 				res.json object
