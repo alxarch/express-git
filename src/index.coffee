@@ -17,8 +17,10 @@ EXPRESS_GIT_DEFAULTS =
 	auto_init: yes
 	browse: yes
 	init_options: {}
+	max_size: 2 * 1024
+	max_age: 365 * 24 * 60 * 60
 	pattern: /.*/
-	auth: null
+	authorize: null
 
 EXPRESS_GIT_DEFAULT_HOOKS =
 	'pre-init': Promise.resolve
@@ -31,8 +33,8 @@ expressGit.serve = (root, options) ->
 	options = assign {}, options, EXPRESS_GIT_DEFAULTS
 	unless options.pattern instanceof RegExp
 		options.pattern = new Regexp "#{options.pattern or '.*'}"
-	if typeof options.auth is "function"
-		GIT_AUTH = Promise.promisify options.auth
+	if typeof options.authorize is "function"
+		GIT_AUTH = Promise.promisify options.authorize
 	else
 		GIT_AUTH = -> Promise.resolve null
 

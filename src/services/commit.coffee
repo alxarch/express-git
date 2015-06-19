@@ -15,7 +15,7 @@ module.exports = (app, options) ->
 	app.post "/:reponame(.*).git/:refname(.*)?/commit/:path(.*)?", app.authorize("commit"), (req, res, next) ->
 		{using, open} = req.git
 		{reponame, refname, path} = req.params
-		etag = req.headers['x-commit-oid'] or "#{git.Oid.ZERO}"
+		etag = req.headers['x-parent-id'] or req.query.parent or "#{git.Oid.ZERO}"
 		repo = open reponame
 		checkref = ->
 			repo.then (repo) ->
@@ -35,7 +35,7 @@ module.exports = (app, options) ->
 		commit = Promise.join repo, checkref(), (repo, ref) ->
 			if ref then repo.getCommit ref.target() else null
 		.then using
-	
+
 		tree = commit
 			.then (commit) -> commit?.getTree()
 			.then using
@@ -82,7 +82,7 @@ module.exports = (app, options) ->
 					remove.push value
 				else
 					commit[fieldname] = value
-			
+
 			finish = new Promise (resolve) -> bb.on "finish", -> resolve()
 			req.pipe bb
 			finish

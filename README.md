@@ -60,7 +60,20 @@ If set to `false` push/pull operations will not be possible over `http`.
 
 > default: true
 
-Enable the [blob service](#blob-service).
+Enable the [raw service](#raw-service).
+
+### options.browse
+
+> default: true
+
+Enable the [browse service](#browse-service).
+
+
+### options.allow_commits
+
+> default: true
+
+Enable the [commit service](#commit-service).
 
 ####  options.hooks
 
@@ -89,15 +102,12 @@ Prevent the initialization of the repo by passing an error to the callback.
 
 See [Git Hooks][Git Hooks] for more info.
 
-### options.auth
+### options.authorize
 
 > default: noop
 
 A `(service, callback)` hook to use to authorize requests.
-As with hooks `this.req` and `this.res` will be bound to the request and response objects.	
-All git-related parameters are assigned to `this.req.git` object.
-To prevent an action, pass an error to the callback.
-
+As with hooks `this.req` and `this.res` will be bound to the request and response objects. To prevent an action, pass an error to the callback.
 
 ### options.pattern
 
@@ -127,7 +137,14 @@ To override per-repo init_options use `hooks['pre-init']`.
 
 > default: A year in seconds
 
-The max_age Cache-Control header to use for served blobs
+The `max_age` `Cache-Control` header to use for served blobs
+
+
+### options.max_size
+
+> default: 2K
+
+The max size of truncated blob data to include in [browse](#browse-service) requests.
 
 ### options.git_executable
 
@@ -144,16 +161,17 @@ You can specify the git executable to use with the `git_executable` option.
 Allow push/pull over http at
 
 ```
-/path/to/repo.git
+GET /path/to/repo.git/info/refs?service=(git-receive-pack|git-upload-pack)
+POST /path/to/repo.git/(git-receive-pack|git-upload-pack)
 ```
 
 
-## `blob` service
+## `raw` service
 
 Serve blobs from any ref at
 
 ```
-/path/to/repo.git/(ref?)/blob/path/to/file.txt
+GET /path/to/repo.git/(ref?)/raw/path/to/file.txt
 ```
 
 The default ref is `HEAD`.
@@ -165,6 +183,44 @@ must revalidate the freshness on each request.
 
 See [HTTP Cache Headers](http://www.mobify.com/blog/beginners-guide-to-http-cache-headers/) for more info.
 
+
+## `browse` service
+
+Browse repositories as json
+
+```
+GET /path/to/repo.git/(ref?)/blob/(path/to/file.txt)
+GET /path/to/repo.git/(ref?)/tree/(path/to/dir)?
+GET /path/to/repo.git/(ref?)/commit/
+GET /path/to/repo.git/(ref?)/object/(object-id)
+```
+
+The default ref is `HEAD`.
+
+
+## `commit` service
+
+Git commits using multipart forms
+
+```
+POST /path/to/repo.git/(ref?)/commit/(path/to/basepath)?parent=(object-id)
+```
+
+> Commit parent id should either be specified by an `x-parent-id` header
+> or the `parent` query parameter. It will default to the empty object id (40 zeros)
+
+If the provided parent id is not the current target of the ref,
+the commit will be rejected with a `409 Confict` error response.
+
+### Form fields
+
+**message** The commit message
+
+**remove** (can repeated be multiple times) The paths to remove (stemming from basepath if provided). Removals occur before additions.
+
+### File fields
+
+All form file fields will be added, using the fieldname as path (stemming from basepath if provided).
 
 
 ## Init options
@@ -231,9 +287,12 @@ The service name for this request
 
 Possible service names are:
 
- - `blob` for raw file requests (if `options.serve_static` is enabled)
+ - `raw` for raw file requests (if `options.serve_static` is enabled)
+ - `browse` for json browsing of the repos  (if `options.browse` is enabled)
+ - `commit` for commits over http  (if `options.allow_commits` is enabled)
  - `receive-pack` for push requests
  - `upload-pack` for fetch requests
+ - `advertise-refs` for ref advertisement before push/pull requests
 
 ### `req.git.auth`
 
