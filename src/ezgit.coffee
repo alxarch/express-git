@@ -140,6 +140,15 @@ g.Revparse._single = g.Revparse.single
 g.Revparse.single = (repo, where) -> g.Revparse._single repo, @toSpec where
 
 assign g.Repository::,
+	headRefName: ->
+		if @isEmpty()
+			@head().catch (err) -> err.message.replace /.*'([^']+)'.*/, '$1'
+		else
+			@head().then (head) ->
+				name = head.name()
+				head.free()
+				name
+
 	commit: (options) ->
 		{ref, tree} = options
 		if ref instanceof g.Reference
@@ -267,7 +276,7 @@ g.Signature.fromString = (signature, date) ->
 	name = trim name
 	@create name, email, time, offset
 
-g.Signature::getDate() = ->
+g.Signature::getDate = ->
 	d = new Date()
 	d.setTime @when().time * 1000
 	d
@@ -287,5 +296,21 @@ g.Commit::toJSON = ->
 	author: "#{@author()}"
 	header: "#{@rawHeader()}"
 	message: "#{@message()}"
+
+g.Reference.find = (repo, refname="HEAD") ->
+	ref =
+		if @isValidName refname
+		then @lookup(repo, refname).catch -> null
+		else @dwim repo, refname
+	ref.then (ref) =>
+		if ref?.isSymboilic()
+			refname = ref.symbolicTarget()
+			@find repo, refname
+			.catch -> ref
+			.then (result) ->
+				ref.free()
+				result
+		else
+			ref
 
 module.exports = g
