@@ -70,12 +70,13 @@ module.exports = (app, options) ->
 			bb.on "file", (filepath, file) ->
 				filepath = _path.join (path or ""), filepath
 				dest = _path.join workdir, filepath
-				files.push new Promise (resolve, reject) ->
-					file.on "end", ->
-						add.push filepath
-						resolve()
-					file.on "error", reject
-					file.pipe createWriteStream dest
+				files.push (mkdirp _path.dirname dest).then ->
+					new Promise (resolve, reject) ->
+						file.on "end", ->
+							add.push filepath
+							resolve()
+						file.on "error", reject
+						file.pipe createWriteStream dest
 
 			commit = {}
 			remove = []
