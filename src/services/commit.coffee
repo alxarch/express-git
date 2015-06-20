@@ -17,6 +17,7 @@ module.exports = (app, options) ->
 		{reponame, refname, path} = req.params
 		etag = req.headers['x-parent-id'] or req.query?.parent or "#{git.Oid.ZERO}"
 		repo = open reponame
+		refname ?= "HEAD"
 		ref = repo.then (repo) ->
 				git.Reference.find repo, refname
 			.then using
@@ -95,8 +96,6 @@ module.exports = (app, options) ->
 					index.addByPath a
 				index.writeTree()
 			.finally -> index.clear()
-			.then (tree) -> repo.getTree tree
-			.then using
 			.then (tree) ->
 				author =
 					if commit.author
@@ -106,36 +105,25 @@ module.exports = (app, options) ->
 					if commit.committer
 					then git.Signature.create commit.committer, new Date()
 					else git.Signature.create author, new Date()
-				parents: [parent]
-				tree: tree
+				using committer
+				using author
+				# Make everything modifiable
+				parents: if parent then ["#{parent.id()}" ] else []
+				ref: refname
+				tree: "#{tree}"
 				author: author.toJSON()
-				commiter: committer.toJSON()
-				message: message.toJSON()
+				committer: committer.toJSON()
+				message: commit.message
 			.then (commit) ->
 				hook 'pre-commit', repo, commit
-				.then -> checkref()
-				.then -> repo.commit assign {}, commit, ref: null
+				.then -> checkref() # Re-check that ref has not changed
+				.then -> repo.commit commit
 				.then using
-				.then (commit) ->
-					signature = commit.committer()
-					message = commit.message()
-					id = commit.id()
-					hook 'update', repo,
-						after: "#{id}"
-						before: etag
-						ref: refname
-					.then -> ref
-					.then (ref) ->
-						if ref?
-							ref.setTarget id, signature, message
-						else
-							git.Reference.create repo, refname, id, 0, signature, message
-					.then using
-					.then (ref) ->
-						hook 'post-receive', [
-							{before: etag, after: "#{ref.target()}", ref: "#{ref.name()}"}
-						]
-				.then commit
+				.then (result) ->
+					commit.id = "#{result.id()}"
+					hook 'post-commit', repo, commit
+					.catch -> result
+					.then -> result
 		.then (commit) -> next null, res.json commit
 		.catch next
 		.finally -> rimraf workdir

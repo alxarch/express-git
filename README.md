@@ -94,11 +94,15 @@ Prevent the initialization of the repo by passing an error to the callback.
 
 - `post-init: (repo, callback)` Where `repo` is a `nodegit.Repository` object for the new repo.
 
-- `pre-receive: (changes, callback)` Where `changes` is an `Array` of `{before, after, ref}` objects. Passing an error to the callback will prevent the push request.
+- `pre-receive: (repo, changes, callback)` Where `changes` is an `Array` of `{before, after, ref}` objects. Passing an error to the callback will prevent the push request.
 
-- `update: (change, callback)` Where `change` is a `{before, after, ref}` object. Passing an error to the callback will prevent the push for this specific ref.
+- `update: (repo, change, callback)` Where `change` is a `{before, after, ref}` object. Passing an error to the callback will prevent the push for this specific ref.
 
-- `post-receive: (changes, callback)` Where `changes` is an `Array` of `{before, after, ref}` objects. Any error passed to the callback will be reported to the client but will not prevent the request.
+- `post-receive: (repo, changes, callback)` Where `changes` is an `Array` of `{before, after, ref}` objects. Any error passed to the callback will be reported to the client but will not prevent the request.
+
+- `pre-commit: (repo, commit, callback)` Where `repo` is the `nodegit.Repository` instance where the commit will happen, `commit` is an `object` with `ref, message, author, tree, parents, committer` keys. Passing an error to the callback will abort the commit.
+
+- `post-commit: (repo, commit, callback)` Where `repo` is the `nodegit.Repository` instance where the commit happened and `commit` is an object with commit details.
 
 See [Git Hooks][Git Hooks] for more info.
 

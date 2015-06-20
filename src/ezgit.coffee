@@ -302,14 +302,11 @@ g.Reference.find = (repo, refname="HEAD") ->
 		if @isValidName refname
 		then @lookup(repo, refname).catch -> null
 		else @dwim repo, refname
-	ref.then (ref) =>
-		if ref?.isSymboilic()
-			refname = ref.symbolicTarget()
+	ref.then (r) =>
+		if r?.isSymbolic()
+			refname = r.symbolicTarget()
 			@find repo, refname
-			.catch -> ref
-			.then (result) ->
-				ref.free()
-				result
+			.catch -> r
 		else
 			ref
 
