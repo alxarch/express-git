@@ -278,7 +278,7 @@ g.Signature.fromString = (signature, date) ->
 
 g.Signature::getDate = ->
 	d = new Date()
-	d.setTime @when().time * 1000
+	d.setTime @when().time() * 1000
 	d
 
 g.Signature::toJSON = ->
@@ -292,9 +292,8 @@ g.Commit::toJSON = ->
 	tree: "#{@treeId()}"
 	parents: @parents().map (p) -> "#{p}"
 	date: @date()
-	committer: "#{@committer()}"
-	author: "#{@author()}"
-	header: "#{@rawHeader()}"
+	committer: @committer().toJSON()
+	author: @author().toJSON()
 	message: "#{@message()}"
 
 g.Reference.find = (repo, refname="HEAD") ->

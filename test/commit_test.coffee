@@ -3,6 +3,7 @@ Promise = require "bluebird"
 os = require "os"
 path = require "path"
 supertest = require "supertest-as-promised"
+{assert} = require "chai"
 {cat} = require "shelljs"
 GIT_PROJECT_ROOT = path.join os.tmpdir(), "express-git-test-#{new Date().getTime()}"
 app = expressGit.serve GIT_PROJECT_ROOT, {}
@@ -18,10 +19,14 @@ describe "POST /*.git/commit", ->
 		.attach "foo/test.txt", FILE
 		.expect 200
 		.then ->
+			commit = agent.get "/test.git/commit"
+			.expect (res) ->
+				console.log res.body
+
 			fileA = agent.get "/test.git/raw/foo/bar/test.txt"
 			.expect 200
 			.expect cat FILE
 			fileB = agent.get "/test.git/raw/foo/test.txt"
 			.expect 200
 			.expect cat FILE
-			Promise.join fileA, fileB
+			Promise.join fileA, fileB, commit
