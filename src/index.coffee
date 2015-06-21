@@ -49,6 +49,7 @@ expressGit.serve = (root, options) ->
 		assign {}, EXPRESS_GIT_DEFAULT_HOOKS, hooks
 
 	app = express()
+	app.project_root = GIT_PROJECT_ROOT
 	app.git = git
 
 	{NonHttpError, NotFoundError, BadRequestError, UnauthorizedError} = app.errors = require "./errors"

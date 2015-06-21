@@ -5,7 +5,7 @@
   "main": "lib/index.js",
   "scripts": {
     "prepublish": "coffee -c -m -o lib/ src/",
-    "test": "mocha --compilers=coffee:coffee-script/register -f _test test/"
+    "test": "mocha --compilers=coffee:coffee-script/register  test/"
   },
   "author": "Alexandros Sigalas <alxarch@gmail.com>",
   "license": "Apache 2.0",
@@ -30,10 +30,12 @@
     "shelljs": "^0.5.0"
   },
   "devDependencies": {
+    "chai": "^3.0.0",
     "coffee-script": "^1.9.3",
     "mocha": "^2.2.5",
     "morgan": "^1.5.3",
-    "supertest": "^1.0.1"
+    "supertest": "^1.0.1",
+    "supertest-as-promised": "^2.0.1"
   },
   "repository": {
     "type": "git",
