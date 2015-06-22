@@ -7,37 +7,41 @@ os = require "os"
 {createWriteStream} = require "fs"
 rimraf = Promise.promisify require "rimraf"
 mkdirp = Promise.promisify require "mkdirp"
+git = require "../ezgit"
 
 module.exports = (app, options) ->
 	{ConflictError, BadRequestError} = app.errors
-	{git} = app
 
 	app.post "/:reponame(.*).git/:refname(.*)?/commit/:path(.*)?", app.authorize("commit"), (req, res, next) ->
-		{using, open} = req.git
+		{hook, using, open} = req.git
 		{reponame, refname, path} = req.params
-		etag = req.headers['x-parent-id'] or req.query.parent or "#{git.Oid.ZERO}"
+		etag = req.headers['x-parent-id'] or req.query?.parent or "#{git.Oid.ZERO}"
 		repo = open reponame
-		checkref = ->
-			repo.then (repo) ->
-				if repo.isEmpty()
-					null
-				else if refname
-					repo.getReference refname
-				else
-					repo.head()
-			.catch httpify 404
+		refname ?= "HEAD"
+		ref = repo.then (repo) ->
+				git.Reference.find repo, refname
 			.then using
 			.then (ref) ->
+				if ref?.isSymbolic()
+					refname = ref.symbolicTarget()
+					return null
+				else if ref?
+					refname = ref.name()
+				ref
+			.catch httpify 404
+
+		checkref = ->
+			ref.then (ref) ->
 				if ref? and "#{ref.target()}" isnt etag
 					throw new ConflictError
 				ref
 		ref = checkref()
 
-		commit = Promise.join repo, ref, (repo, ref) ->
-			if ref then repo.getCommit ref.target() else null
+		parent = Promise.join repo, ref, (repo, ref) ->
+			if ref? then repo.getCommit ref.target() else null
 		.then using
 
-		tree = commit
+		tree = parent
 			.then (commit) -> commit?.getTree()
 			.then using
 			.then (tree) ->
@@ -48,8 +52,6 @@ module.exports = (app, options) ->
 					if entry.isBlob()
 						throw new BadRequestError()
 					tree
-				.catch -> tree
-			.then using
 
 		index = Promise.join repo, tree, (repo, tree) ->
 			repo.index()
@@ -61,7 +63,7 @@ module.exports = (app, options) ->
 				index
 
 		workdir = _path.join os.tmpdir(), "express-git-#{new Date().getTime()}"
-		Promise.join repo, ref, commit, index, mkdirp(workdir), (repo, ref, parent, index) ->
+		Promise.join repo, parent, index, mkdirp(workdir), (repo, parent, index) ->
 			repo.setWorkdir workdir, 0
 			bb = new Busboy headers: req.headers
 			files = []
@@ -69,12 +71,13 @@ module.exports = (app, options) ->
 			bb.on "file", (filepath, file) ->
 				filepath = _path.join (path or ""), filepath
 				dest = _path.join workdir, filepath
-				files.push new Promise (resolve, reject) ->
-					file.on "end", ->
-						add.push filepath
-						resolve()
-					file.on "error", reject
-					file.pipe createWriteStream dest
+				files.push (mkdirp _path.dirname dest).then ->
+					new Promise (resolve, reject) ->
+						file.on "end", ->
+							add.push filepath
+							resolve()
+						file.on "error", reject
+						file.pipe createWriteStream dest
 
 			commit = {}
 			remove = []
@@ -95,8 +98,6 @@ module.exports = (app, options) ->
 					index.addByPath a
 				index.writeTree()
 			.finally -> index.clear()
-			.then (tree) -> repo.getTree tree
-			.then using
 			.then (tree) ->
 				author =
 					if commit.author
@@ -106,25 +107,25 @@ module.exports = (app, options) ->
 					if commit.committer
 					then git.Signature.create commit.committer, new Date()
 					else git.Signature.create author, new Date()
-
-				parents: [parent]
-				ref: "#{ref or refname or 'HEAD'}"
-				tree: tree
+				using committer
+				using author
+				# Make everything modifiable
+				parents: if parent then ["#{parent.id()}" ] else []
+				ref: refname
+				tree: "#{tree}"
 				author: author.toJSON()
-				commiter: committer.toJSON()
-				message: message.toJSON()
+				committer: committer.toJSON()
+				message: commit.message
 			.then (commit) ->
-				hook['pre-commit'] repo, commit
-				.then -> checkref()
+				hook 'pre-commit', repo, commit
+				.then -> checkref() # Re-check that ref has not changed
 				.then -> repo.commit commit
-			.then using
-			.then (commit) ->
-				hook['update'] repo,
-					before: "#{etag}"
-					after: "#{commit.id()}"
-					ref: "#{ref or refname or 'HEAD'}"
-				.then -> commit
-				.catch -> commit
+				.then using
+				.then (result) ->
+					commit.id = "#{result.id()}"
+					hook 'post-commit', repo, commit
+					.catch -> result
+					.then -> result
 		.then (commit) -> next null, res.json commit
 		.catch next
 		.finally -> rimraf workdir

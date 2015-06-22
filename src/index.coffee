@@ -27,6 +27,8 @@ EXPRESS_GIT_DEFAULT_HOOKS =
 	'post-init': Promise.resolve
 	'pre-receive': Promise.resolve
 	'post-receive': Promise.resolve
+	'pre-commit': Promise.resolve
+	'post-commit': Promise.resolve
 	'update': Promise.resolve
 
 expressGit.serve = (root, options) ->
@@ -47,6 +49,7 @@ expressGit.serve = (root, options) ->
 		assign {}, EXPRESS_GIT_DEFAULT_HOOKS, hooks
 
 	app = express()
+	app.project_root = GIT_PROJECT_ROOT
 	app.git = git
 
 	{NonHttpError, NotFoundError, BadRequestError, UnauthorizedError} = app.errors = require "./errors"

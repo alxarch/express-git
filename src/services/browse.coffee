@@ -1,3 +1,4 @@
+{httpify, assign} = require "../helpers"
 mime = require "mime-types"
 _path = require "path"
 module.exports = (app, options) ->
@@ -16,11 +17,7 @@ module.exports = (app, options) ->
 			.then using
 			.then (commit) ->
 				res.set app.cacheHeaders commit
-				res.json
-					type: "commit"
-					id: "#{commit.id()}"
-					tree: "#{commit.treeId()}"
-					message: commit.message()
+				res.json assign {type: "commit"}, commit.toJSON()
 				next()
 			.catch next
 
@@ -65,6 +62,7 @@ module.exports = (app, options) ->
 					encoding: encoding
 					size: size
 				next()
+			.catch httpify 404
 			.catch next
 
 	app.get "/:reponame(.*).git/:refname(.*)?/tree/:path(.*)?",
