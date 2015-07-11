@@ -32,7 +32,7 @@ EXPRESS_GIT_DEFAULT_HOOKS =
 	'update': Promise.resolve
 
 expressGit.serve = (root, options) ->
-	options = assign {}, options, EXPRESS_GIT_DEFAULTS
+	options = assign {}, EXPRESS_GIT_DEFAULTS, options
 	unless options.pattern instanceof RegExp
 		options.pattern = new Regexp "#{options.pattern or '.*'}"
 	if typeof options.authorize is "function"
@@ -45,7 +45,7 @@ expressGit.serve = (root, options) ->
 	GIT_HOOKS = do ->
 		hooks = {}
 		for own hook, callback of options.hooks when typeof callback is "function"
-			hooks[hook] = Promise.promisify hook
+			hooks[hook] = Promise.promisify callback
 		assign {}, EXPRESS_GIT_DEFAULT_HOOKS, hooks
 
 	app = express()
