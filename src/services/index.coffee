@@ -1,5 +1,5 @@
 module.exports =
-	git_http_backend: require "./git_http_backend"
+	git_http_backend: require "./git-http-backend"
 	raw: require "./raw"
 	browse: require "./browse"
 	object: require "./object"
