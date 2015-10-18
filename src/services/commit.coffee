@@ -1,4 +1,3 @@
-#TODO: hooks
 Busboy = require "busboy"
 Promise = require "bluebird"
 _path = require "path"
@@ -13,7 +12,7 @@ module.exports = (app, options) ->
 	{ConflictError, BadRequestError} = app.errors
 
 	app.post "/:reponame(.*).git/:refname(.*)?/commit/:path(.*)?", app.authorize("commit"), (req, res, next) ->
-		{hook, using, open} = req.git
+		{using, open} = req.git
 		{reponame, refname, path} = req.params
 		etag = req.headers['x-parent-id'] or req.query?.parent or "#{git.Oid.ZERO}"
 		repo = open reponame
@@ -117,15 +116,14 @@ module.exports = (app, options) ->
 				committer: committer.toJSON()
 				message: commit.message
 			.then (commit) ->
-				hook 'pre-commit', repo, commit
-				.then -> checkref() # Re-check that ref has not changed
+				app.emit "pre-commit", repo, commit
 				.then -> repo.commit commit
 				.then using
 				.then (result) ->
 					commit.id = "#{result.id()}"
-					hook 'post-commit', repo, commit
-					.catch -> result
+					app.emit "post-commit", repo, commit
 					.then -> result
+
 		.then (commit) -> next null, res.json commit
 		.catch next
 		.finally -> rimraf workdir

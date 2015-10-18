@@ -170,7 +170,7 @@ assign g.Repository::,
 				parent
 			else
 				@getCommit "#{parent}"
-				
+
 		message = options.message or "Commit #{new Date()}"
 
 		Promise.join ref, tree, parents, (ref, tree, parents) =>
@@ -189,8 +189,8 @@ assign g.Repository::,
 		sig = options.signature or Signature.default @
 		g.Reference.create @, name, oid, force, sig, message or ""
 
-Object.defineProperty g.Revwalk::, 'repo',
-	get: -> @repository()
+# Object.defineProperty g.Revwalk::, 'repo',
+# 	get: -> @repository()
 
 g.Blob::toJSON = ->
 	id: "#{@id()}"

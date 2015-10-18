@@ -1,6 +1,7 @@
 {httpify} = require "../helpers"
 module.exports = (app, options) ->
 	{git} = app
+	{BLOB, TREE, COMMIT, TAG} = git.Object.TYPE
 	{BadRequestError, NotModified} = app.errors
 	app.get "/:repo(.*).git/object/:oid([a-zA-Z0-9]{40})",
 		app.authorize "browse"
@@ -21,6 +22,8 @@ module.exports = (app, options) ->
 						git.Tree.lookup repo, oid
 					when COMMIT
 						git.Commit.lookup repo, oid
+					when TAG
+						git.Tag.lookup repo, oid
 					else
 						throw new BadRequestError
 			.then using

@@ -4,3 +4,4 @@ module.exports =
 	browse: require "./browse"
 	object: require "./object"
 	commit: require "./commit"
+	refs: require "./refs"

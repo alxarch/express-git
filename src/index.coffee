@@ -11,9 +11,9 @@ expressGit.services = require "./services"
 
 EXPRESS_GIT_DEFAULTS =
 	git_http_backend: yes
-	hooks: {}
 	serve_static: yes
 	accept_commits: yes
+	refs: yes
 	auto_init: yes
 	browse: yes
 	init_options: {}
@@ -22,15 +22,6 @@ EXPRESS_GIT_DEFAULTS =
 	pattern: /.*/
 	authorize: null
 
-EXPRESS_GIT_DEFAULT_HOOKS =
-	'pre-init': Promise.resolve
-	'post-init': Promise.resolve
-	'pre-receive': Promise.resolve
-	'post-receive': Promise.resolve
-	'pre-commit': Promise.resolve
-	'post-commit': Promise.resolve
-	'update': Promise.resolve
-
 expressGit.serve = (root, options) ->
 	options = assign {}, EXPRESS_GIT_DEFAULTS, options
 	unless options.pattern instanceof RegExp
@@ -38,15 +29,10 @@ expressGit.serve = (root, options) ->
 	if typeof options.authorize is "function"
 		GIT_AUTH = Promise.promisify options.authorize
 	else
-		GIT_AUTH = -> Promise.resolve null
+		GIT_AUTH = Promise.resolve()
 
 	GIT_PROJECT_ROOT = _path.resolve "#{root}"
 	GIT_INIT_OPTIONS = freeze options.init_options
-	GIT_HOOKS = do ->
-		hooks = {}
-		for own hook, callback of options.hooks when typeof callback is "function"
-			hooks[hook] = Promise.promisify callback
-		assign {}, EXPRESS_GIT_DEFAULT_HOOKS, hooks
 
 	app = express()
 	app.project_root = GIT_PROJECT_ROOT
@@ -56,15 +42,10 @@ expressGit.serve = (root, options) ->
 
 	app.disable "etag"
 
-	app.hook = (name, args...) ->
-		(req, res, next) ->
-			GIT_HOOKS[name].apply {req, res}, args
-			.then -> next()
-			.catch next
-
 	app.authorize = (name) ->
 		(req, res, next) ->
 			GIT_AUTH.call {req, res}, name
+			.catch httpify 401
 			.then -> next()
 			.catch next
 
@@ -73,38 +54,33 @@ expressGit.serve = (root, options) ->
 		"Cache-Control": "private, max-age=#{options.max_age}, no-transform, must-revalidate"
 
 	app.use (req, res, next) ->
-		authorize = (name) -> GIT_AUTH.call {req, res}, name
-		hook = (name, args...) -> GIT_HOOKS[name].apply {req, res}, args
 		NODEGIT_OBJECTS = []
 		using = (obj) ->
 			NODEGIT_OBJECTS.push obj
 			obj
 		open = (name, init=options.auto_init) ->
-			m = "#{name.replace /\.git$/, ''}".match options.pattern
-			decorate = (repo) -> assign repo, {name, params}
-			unless m?
-				return decorate Promise.reject new NotFoundError "Repository not found"
+			[name, params...] = ("#{name.replace /\.git$/, ''}".match options.pattern) or []
+			unless name?
+				return Promise.reject new NotFoundError "Repository not found"
 
-			params = m[1..]
 			git_dir = _path.join GIT_PROJECT_ROOT, name
 
-			decorate git.Repository.open git_dir,
+			git.Repository.open git_dir,
 				bare: yes
 				ceilings: [GIT_PROJECT_ROOT]
-			.then decorate
-			.catch (err) ->
-				throw err unless init and not test "-e", git_dir
-
-				hook "pre-init", name
-				.then (init_options) ->
-					git.Repository.init git_dir, init_options or GIT_INIT_OPTIONS or {}
-				.then decorate
-				.then (repo) ->
-					hook "post-init", repo
-					.then -> repo
-					.catch -> repo
 			.then using
 			.catch httpify 404
+			.catch (err) ->
+				if init and not test "-e", git_dir
+					init_options = assign {}, GIT_INIT_OPTIONS
+					app.emit "pre-init", name, params, init_options
+					.then -> git.Repository.init git_dir, init_options
+					.then using
+					.then (repo) ->
+						app.emit "post-init", name, params, repo
+						.then -> repo
+				else
+					throw err
 
 		refopen = (reponame, refname, callback) ->
 			repo = open reponame, no
@@ -115,7 +91,7 @@ expressGit.serve = (root, options) ->
 					re.head()
 			Promise.join repo, ref.then(using), callback
 
-		req.git = freeze req.git, {using, hook, authorize, open, refopen, NODEGIT_OBJECTS}
+		req.git = freeze req.git, {using, open, refopen, NODEGIT_OBJECTS}
 		next()
 
 	if options.browse
@@ -127,6 +103,8 @@ expressGit.serve = (root, options) ->
 		expressGit.services.raw app, options
 	if options.git_http_backend
 		expressGit.services.git_http_backend app, options
+	if options.refs
+		expressGit.services.refs app, options
 
 	# Cleanup nodegit objects
 	app.use (req, res, next) ->
@@ -136,15 +114,3 @@ expressGit.serve = (root, options) ->
 		next()
 
 	app
-
-unless module.parent
-	port = process.env.EXPRESS_GIT_PORT or 9000
-	root = process.env.EXPRESS_GIT_ROOT or "/tmp/repos"
-	app = express()
-	app.use require("morgan") "dev"
-	app.use expressGit.serve root
-	app.use (err, req, res, next) ->
-		console.error err.stack
-		next err
-	app.listen port, ->
-		console.log "Express git serving #{root} on port #{port}"

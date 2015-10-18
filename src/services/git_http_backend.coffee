@@ -24,7 +24,7 @@ module.exports = (app, options={}) ->
 		.catch next
 
 	app.post ":repo(.*).git/git-receive-pack", app.authorize("receive-pack"), (req, res, next) ->
-		{hook, open} = req.git
+		{open} = req.git
 		res.set headers "receive-pack"
 		repo = open req.params.repo
 		pack = new Promise (resolve, reject) ->
@@ -43,12 +43,11 @@ module.exports = (app, options={}) ->
 					capabilities = null
 				pktline "#{line}\n"
 
-			hook 'pre-receive', repo, changes
-			.then -> changes
-			.map (change) ->
-				hook 'update', repo, changes
+			app.emit "pre-receive", repo, changes
+			.then -> Promise.all changes.map (change, i) ->
+				app.emit "update", repo, change
 				.then -> change
-				.catch -> null
+				.catch (err) -> null
 			.then (changes) ->
 
 				changes = (c for c in changes when c?)
@@ -65,7 +64,7 @@ module.exports = (app, options={}) ->
 				pack.pipe stdin
 
 				git
-			.then -> hook 'post-receive', repo, changes
+			.then -> app.emit "post-receive", repo, changes
 		.finally -> res.end()
 		.then -> next()
 		.catch next

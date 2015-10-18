@@ -75,36 +75,6 @@ Enable the [browse service](#browse-service).
 
 Enable the [commit service](#commit-service).
 
-####  options.hooks
-
-> default: {}
-
-Set to and object with key-value pairs of hook - callback.
-All hook callbacks take a callback as the last argument for
-asynchronous hook logic.
-All hook callbacks will be bound to an object so that
-`this.req` is the request object and
-`this.res` is the response object.
-
-The currenctly implemented hooks are
-
-- `pre-init: (repo, callback)` Where `repo` is the name of the repo to be created.
-Specify individual repo `init_options` with `callback(null, options)`. See [Init Options](#init-options).
-Prevent the initialization of the repo by passing an error to the callback.
-
-- `post-init: (repo, callback)` Where `repo` is a `nodegit.Repository` object for the new repo.
-
-- `pre-receive: (repo, changes, callback)` Where `changes` is an `Array` of `{before, after, ref}` objects. Passing an error to the callback will prevent the push request.
-
-- `update: (repo, change, callback)` Where `change` is a `{before, after, ref}` object. Passing an error to the callback will prevent the push for this specific ref.
-
-- `post-receive: (repo, changes, callback)` Where `changes` is an `Array` of `{before, after, ref}` objects. Any error passed to the callback will be reported to the client but will not prevent the request.
-
-- `pre-commit: (repo, commit, callback)` Where `repo` is the `nodegit.Repository` instance where the commit will happen, `commit` is an `object` with `ref, message, author, tree, parents, committer` keys. Passing an error to the callback will abort the commit.
-
-- `post-commit: (repo, commit, callback)` Where `repo` is the `nodegit.Repository` instance where the commit happened and `commit` is an object with commit details.
-
-See [Git Hooks][Git Hooks] for more info.
 
 ### options.authorize
 
@@ -157,6 +127,70 @@ The max size of truncated blob data to include in [browse](#browse-service) requ
 For `git_http_backend` service to work you need git installed on the server.
 You can specify the git executable to use with the `git_executable` option.
 
+
+##  Hooks
+
+Git hooks are implemented using events.
+
+Register event listeners via `app.on()`
+
+Events to listen for:
+
+### `pre-init: (name, params, init_options)`
+
+> Cancellable: yes
+
+Where `name` is the name of the repo to be created and `params` is a parameter
+array parsed via `options.pattern`. The 3rd argument `init_options`
+is an object that you can modify to change the [initialization options](#init-options) for this repo.
+You can return a promise if you need to perform an async operation.
+Rejecting will prevent the initialization of the repo.
+
+### `post-init: (repo, )`
+
+> Cancellable: no
+
+Where `repo` is a `nodegit.Repository` object for the new repo.
+
+### `pre-receive: (repo, changes)`
+
+> Cancellable: yes
+
+Where `changes` is an `Array` of `{before, after, ref}` objects.
+Rejecting will prevent the push request.
+
+### `update: (repo, change)`
+
+> Cancellable: yes
+
+Where `change` is a `{before, after, ref}` object.
+Rejecting will prevent the push for this specific ref.
+
+### `post-receive: (repo, changes)`
+
+> Cancellable: no
+
+Where `changes` is an `Array` of `{before, after, ref}` objects.
+Rejecting will be report the error to the client but will not prevent the request.
+
+
+### `pre-commit: (repo, commit)`
+
+> Cancellable: yes
+
+Where `repo` is the `nodegit.Repository` instance where the commit will happen,
+`commit` is an `object` with `ref, message, author, tree, parents, committer` keys.
+Rejecting will abort the commit.
+
+
+### `post-commit: (repo, changes)`
+
+> Cancellable: no
+
+Where `repo` is the `nodegit.Repository` instance where the commit happened
+and `commit` is an object with commit details.
+
+See [Git Hooks][Git Hooks] for more info.
 
 ## Services
 
