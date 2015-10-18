@@ -10,21 +10,18 @@ var app = express();
 app.use("/git", expressGit.serve("path/torepos/", {
 	auto_init: true,
 	serve_static: true,
-	auth: function (service, next) {
+	authorize: function (service, next) {
 		// Authorize a service
 		// this.req holds the request object
 		// this.res holds the response object
 
 		next();
-	},
-	hooks: {
-		'post-receive': function (changes, next) {
-			// Do something after a push
-			// this.req holds the request object
-			// this.res holds the response object
-			next();
-		}
 	}
+});
+
+app.on('post-receive', function (repo, changes) {
+	// Do something after a push
+	next();
 });
 
 app.listen(3000);
@@ -130,9 +127,11 @@ You can specify the git executable to use with the `git_executable` option.
 
 ##  Hooks
 
-Git hooks are implemented using events.
+Git hooks are implemented using events. Async event handlers are supported
+via Promises. Event cancellation is possible (for cancellable events)
+by rejecting a promise or throwing an error.
 
-Register event listeners via `app.on()`
+Register event listeners via `expressGit.on(hook, handler)`
 
 Events to listen for:
 
@@ -145,6 +144,8 @@ array parsed via `options.pattern`. The 3rd argument `init_options`
 is an object that you can modify to change the [initialization options](#init-options) for this repo.
 You can return a promise if you need to perform an async operation.
 Rejecting will prevent the initialization of the repo.
+
+See [Git Hooks][Git Hooks] for more info.
 
 ### `post-init: (repo, )`
 
@@ -190,7 +191,7 @@ Rejecting will abort the commit.
 Where `repo` is the `nodegit.Repository` instance where the commit happened
 and `commit` is an object with commit details.
 
-See [Git Hooks][Git Hooks] for more info.
+
 
 ## Services
 
@@ -250,6 +251,7 @@ POST /path/to/repo.git/(ref?)/commit/(path/to/basepath)?parent=(object-id)
 If the provided parent id is not the current target of the ref,
 the commit will be rejected with a `409 Confict` error response.
 
+
 ### Form fields
 
 **message** The commit message
@@ -261,7 +263,25 @@ the commit will be rejected with a `409 Confict` error response.
 
 ### File fields
 
-All form file fields will be added, using the fieldname as path (stemming from basepath if provided).
+All form file fields will be added, using the fieldname as path.
+(`basepath` url parameter will be prepended to this path)
+
+## `refs` service
+
+Git ref manipulation via REST
+
+```
+PUT /path/to/repo.git/(ref)
+DELETE /path/to/repo.git/(ref)
+```
+
+JSON fields
+
+ - **target** (str) The target to set the ref to point to
+ - **current** (str) The current ref target (to spot conflicts)
+ - **message** (str) The commit message
+ - **symbolic** (bool)
+ - **signature {name, email, date}** A signature to use for the commit
 
 
 ## Init options
