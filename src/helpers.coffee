@@ -14,8 +14,8 @@ zlib = require "zlib"
 {UnsupportedMediaTypeError} = require "./errors"
 module.exports =
 	requestStream: (req) ->
-		encoding = req.headers['content-encoding']?.toLowerCase() or 'identity'
-		length = req.headers['content-length']
+		encoding = req.headers["content-encoding"]?.toLowerCase() or "identity"
+		length = req.headers["content-length"]
 		switch encoding
 			when "deflate"
 				req.pipe zlib.createInflate()
@@ -46,13 +46,13 @@ module.exports =
 			stdio = null
 
 		cp = spawn args...
-		# Node's child_process handling of stdio cannot handle req, res params in stdio
+		# Node"s child_process handling of stdio cannot handle req, res params in stdio
 		if stdio?
-			for s, i in ['stdin', 'stdout', 'stderr']
+			for s, i in ["stdin", "stdout", "stderr"]
 				switch stdio[i]
-					when 'pipe'
+					when "pipe"
 						str = process[s]
-					when 'ignore', null, false, undefined
+					when "ignore", null, false, undefined
 						continue
 					else
 						str = stdio[i]
@@ -77,5 +77,3 @@ module.exports =
 		(err) ->
 			err.status ?= status
 			throw err
-
-

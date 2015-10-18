@@ -8,17 +8,17 @@ Promise = require "bluebird"
 
 module.exports = (app, options={}) ->
 	GIT_EXEC = options?.git_executable or which "git"
-	headers = (service, type='result') ->
-		'Pragma': 'no-cache'
-		'Expires': (new Date '1900').toISOString()
-		'Cache-Control': 'no-cache, max-age=0, must-revalidate'
-		'Content-Type': "application/x-git-#{service.replace 'git-', ''}-#{type}"
+	headers = (service, type="result") ->
+		"Pragma": "no-cache"
+		"Expires": (new Date "1900").toISOString()
+		"Cache-Control": "no-cache, max-age=0, must-revalidate"
+		"Content-Type": "application/x-git-#{service.replace 'git-', ''}-#{type}"
 
 	app.post ":repo(.*).git/git-upload-pack", app.authorize("upload-pack"), (req, res, next) ->
 		res.set headers "upload-pack"
 		req.git.open req.params.repo
 		.then (repo) ->
-			args = ['upload-pack', '--stateless-rpc', repo.path()]
+			args = ["upload-pack", "--stateless-rpc", repo.path()]
 			spawn GIT_EXEC, args, stdio: [req, res, res]
 		.then -> next()
 		.catch next
@@ -77,14 +77,14 @@ module.exports = (app, options={}) ->
 		unless service in ["git-receive-pack", "git-upload-pack"]
 			return next new BadRequestError
 
-		service = service.replace 'git-', ''
+		service = service.replace "git-", "
 
 		req.git.open req.params.repo
 		.then (repo) ->
 			res.set headers service, "advertisement"
 			res.write pktline "# service=git-#{service}\n"
 			res.write ZERO_PKT_LINE
-			args = [service, '--stateless-rpc', '--advertise-refs', repo.path()]
-			spawn GIT_EXEC, args, stdio: ['ignore', res, 'pipe']
+			args = [service, "--stateless-rpc", "--advertise-refs", repo.path()]
+			spawn GIT_EXEC, args, stdio: ["ignore", res, "pipe"]
 		.then -> next()
 		.catch next
