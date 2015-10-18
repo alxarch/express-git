@@ -73,6 +73,12 @@ Enable the [browse service](#browse-service).
 Enable the [commit service](#commit-service).
 
 
+### options.refs
+
+> default: true
+
+Enable the [refs service](#refs-service).
+
 ### options.authorize
 
 > default: noop
@@ -254,12 +260,11 @@ the commit will be rejected with a `409 Confict` error response.
 
 ### Form fields
 
-**message** The commit message
-
-**author** The commit author (accepts `name <email>` format)
-**committer** The committer (accepts `name <email>` format), fallback to author
-**created_at** The of the commit creation (author date)
-**remove** (can repeated be multiple times) The paths to remove (stemming from basepath if provided). Removals occur before additions.
+ - **message** The commit message
+ - **author** The commit author (accepts `name <email>` format)
+ - **committer** The committer (accepts `name <email>` format), fallback to author
+ - **created_at** The of the commit creation (author date)
+ - **remove** (can repeated be multiple times) The paths to remove (stemming from basepath if provided). Removals occur before additions.
 
 ### File fields
 
@@ -275,7 +280,7 @@ PUT /path/to/repo.git/(ref)
 DELETE /path/to/repo.git/(ref)
 ```
 
-JSON fields
+### JSON fields
 
  - **target** (str) The target to set the ref to point to
  - **current** (str) The current ref target (to spot conflicts)
