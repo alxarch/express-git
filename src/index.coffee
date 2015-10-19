@@ -79,6 +79,7 @@ expressGit.serve = (root, options) ->
 					.then (repo) ->
 						app.emit "post-init", name, params, repo
 						.then -> repo
+						.catch -> repo
 				else
 					throw err
 
