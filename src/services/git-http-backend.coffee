@@ -25,6 +25,7 @@ module.exports = (app, options={}) ->
 
 	app.post ":repo(.*).git/git-receive-pack", app.authorize("receive-pack"), (req, res, next) ->
 		{open} = req.git
+
 		res.set headers "receive-pack"
 		repo = open req.params.repo
 		pack = new Promise (resolve, reject) ->
@@ -43,14 +44,17 @@ module.exports = (app, options={}) ->
 					capabilities = null
 				pktline "#{line}\n"
 
+
 			app.emit "pre-receive", repo, changes
-			.then -> Promise.all changes.map (change, i) ->
-				app.emit "update", repo, change
-				.then -> change
-				.catch (err) -> null
+			.then ->
+				Promise.all changes.map (change, i) ->
+					app.emit "update", repo, change
+					.then -> change
+					.catch (err) -> null
 			.then (changes) ->
 
 				changes = (c for c in changes when c?)
+
 				return unless changes.length > 0
 				git = spawn GIT_EXEC, ["receive-pack", "--stateless-rpc", repo.path()]
 
