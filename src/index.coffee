@@ -29,7 +29,7 @@ expressGit.serve = (root, options) ->
 	if typeof options.authorize is "function"
 		GIT_AUTH = Promise.promisify options.authorize
 	else
-		GIT_AUTH = Promise.resolve()
+		GIT_AUTH = -> Promise.resolve()
 
 	GIT_PROJECT_ROOT = _path.resolve "#{root}"
 	GIT_INIT_OPTIONS = freeze options.init_options
