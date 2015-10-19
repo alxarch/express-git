@@ -14,20 +14,20 @@ module.exports = (app, options={}) ->
 		"Cache-Control": "no-cache, max-age=0, must-revalidate"
 		"Content-Type": "application/x-git-#{service.replace 'git-', ''}-#{type}"
 
-	app.post ":repo(.*).git/git-upload-pack", app.authorize("upload-pack"), (req, res, next) ->
+	app.post ":reponame(.*).git/git-upload-pack", app.authorize("upload-pack"), (req, res, next) ->
 		res.set headers "upload-pack"
-		req.git.open req.params.repo
+		req.git.open req.params.reponame
 		.then (repo) ->
 			args = ["upload-pack", "--stateless-rpc", repo.path()]
 			spawn GIT_EXEC, args, stdio: [req, res, res]
 		.then -> next()
 		.catch next
 
-	app.post ":repo(.*).git/git-receive-pack", app.authorize("receive-pack"), (req, res, next) ->
+	app.post ":reponame(.*).git/git-receive-pack", app.authorize("receive-pack"), (req, res, next) ->
 		{open} = req.git
 
 		res.set headers "receive-pack"
-		repo = open req.params.repo
+		repo = open req.params.reponame
 		pack = new Promise (resolve, reject) ->
 			git = new GitUpdateRequest()
 			git.on "error", reject
@@ -75,7 +75,7 @@ module.exports = (app, options={}) ->
 
 	# Ref advertisement for push/pull operations
 	# via git receive-pack/upload-pack commands
-	app.get "/:repo(.*).git/info/refs", app.authorize("advertise-refs"), (req, res, next) ->
+	app.get "/:reponame(.*).git/info/refs", app.authorize("advertise-refs"), (req, res, next) ->
 		{service} = req.query
 
 		unless service in ["git-receive-pack", "git-upload-pack"]
@@ -83,7 +83,7 @@ module.exports = (app, options={}) ->
 
 		service = service.replace "git-", ""
 
-		req.git.open req.params.repo
+		req.git.open req.params.reponame
 		.then (repo) ->
 			res.set headers service, "advertisement"
 			res.write pktline "# service=git-#{service}\n"
