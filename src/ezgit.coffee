@@ -190,8 +190,6 @@ assign g.Repository::,
 		sig = options.signature or Signature.default @
 		Promise.resolve g.Reference.create @, name, oid, force, sig, message or ""
 
-# Object.defineProperty g.Revwalk::, 'repo',
-# 	get: -> @repository()
 
 g.Blob::toJSON = ->
 	id: "#{@id()}"
@@ -309,5 +307,13 @@ g.Reference.find = (repo, refname="HEAD") ->
 			.catch -> r
 		else
 			ref
+
+g.Tag::toJSON = ->
+	id: "#{@id()}"
+	name: "#{@name()}"
+	target: "#{@targetId()}"
+	message: "#{@message()}"
+	tagger: "#{@tagger()?.toJSON()}"
+	type: "#{@targetType()}"
 
 module.exports = g
