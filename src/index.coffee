@@ -114,3 +114,12 @@ expressGit.serve = (root, options) ->
 		next()
 
 	app
+
+if require.main is module
+	PORT = process.env.PORT
+	ROOT = process.argv[1] or process.env.GIT_PROJECT_ROOT or process.cwd()
+	PORT ?= 20000 + (new Date().getTime() % 10000) | 0
+	app = expressGit.serve ROOT, {}
+	app.listen PORT, ->
+		console.log "Listening on #{PORT}"
+		console.log "Serving repos from #{_path.resolve ROOT}"
