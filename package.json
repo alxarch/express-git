@@ -5,7 +5,7 @@
   "main": "lib/index.js",
   "scripts": {
     "prepublish": "coffee -c -m -o lib/ src/",
-    "test": "mocha --compilers=coffee:coffee-script/register  test/"
+    "test": "mocha --compilers=coffee:coffee-script/register --recursive test/"
   },
   "author": "Alexandros Sigalas <alxarch@gmail.com>",
   "license": "Apache 2.0",
