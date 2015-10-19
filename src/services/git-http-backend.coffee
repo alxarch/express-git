@@ -77,7 +77,7 @@ module.exports = (app, options={}) ->
 		unless service in ["git-receive-pack", "git-upload-pack"]
 			return next new BadRequestError
 
-		service = service.replace "git-", "
+		service = service.replace "git-", ""
 
 		req.git.open req.params.repo
 		.then (repo) ->
