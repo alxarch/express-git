@@ -117,8 +117,11 @@ expressGit.serve = (root, options) ->
 	app
 
 if require.main is module
+	os = require "os"
 	PORT = process.env.PORT
-	ROOT = process.argv[1] or process.env.GIT_PROJECT_ROOT or process.cwd()
+	ROOT = process.argv[2] or process.env.GIT_PROJECT_ROOT
+	ROOT ?= _path.join os.tmpdir(), "express-git-repos"
+	mkdir ROOT
 	PORT ?= 20000 + (new Date().getTime() % 10000) | 0
 	app = expressGit.serve ROOT, {}
 	app.listen PORT, ->
