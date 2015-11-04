@@ -2,21 +2,18 @@ require "shelljs/global"
 Promise = require "bluebird"
 execp = Promise.promisify require("child_process").exec
 expressGit = require "../src/index"
-# rimraf = Promise.promisify require "rimraf"
-os = require "os"
-path = require "path"
-http = require "http"
-supertest = require "supertest-as-promised"
 assert = require "assert"
-DATA_DIR = path.resolve __dirname, "data/repo"
-mkdir TMP_DIR = path.join os.tmpdir(), "express-git-tmp-#{new Date().getTime()}"
-mkdir GIT_PROJECT_ROOT = "#{TMP_DIR}/repos"
-mkdir SOURCE_DIR = "#{TMP_DIR}/source"
-mkdir DEST_DIR = "#{TMP_DIR}/dest"
-PORT = 20000 + (new Date().getTime() % 10000) | 0
-REPO = "testrepo-#{new Date().getTime()}"
 
 describe "git-http-backend service", ->
+	DATA_DIR = "#{__dirname}/data/repo"
+	TMP_DIR = GIT_PROJECT_ROOT = SOURCE_DIR = DEST_DIR = null
+	PORT = 20000 + (new Date().getTime() % 10000) | 0
+	REPO = "testrepo-#{new Date().getTime()}"
+	before ->
+		mkdir TMP_DIR = "tmp/express-git-test-#{new Date().getTime()}"
+		mkdir GIT_PROJECT_ROOT = "#{TMP_DIR}/repos"
+		mkdir SOURCE_DIR = "#{TMP_DIR}/source"
+		mkdir DEST_DIR = "#{TMP_DIR}/dest"
 	app = null
 	server = null
 	before ->
@@ -62,5 +59,5 @@ describe "git-http-backend service", ->
 			assert.ok test "-f", "foo/bar/baz.txt"
 			assert.equal (cat "foo/bar/baz.txt"), "foo bar baz\n"
 
-	after ->
-		server.close()
+	after -> server.close()
+	after -> rm "-rf", TMP_DIR
