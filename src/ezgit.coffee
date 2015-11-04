@@ -98,11 +98,11 @@ g.Repository.open = (path, options={}) ->
 	if options.crossfs
 		flags |= @OPEN_FLAG.OPEN_CROSS_FS
 
-	@openExt path, flags, ceilings
+	Promise.resolve @openExt path, flags, ceilings
 
 g.Repository._init = g.Repository.init
 g.Repository.init = (path, options={}) ->
-	@initExt path, g.RepositoryInitOptions.fromObject options
+	Promise.resolve @initExt path, g.RepositoryInitOptions.fromObject options
 
 asrev = g.Revparse.toSpec = (value) ->
 	switch typeof value

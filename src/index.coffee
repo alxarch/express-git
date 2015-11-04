@@ -2,12 +2,14 @@
 Promise = require "bluebird"
 
 {mkdir, test} = require "shelljs"
+# Use a modified express that uses latest path-to-regexp and events-as-promised
 express = require "./express"
 _path = require "path"
 
 module.exports = expressGit = {}
 expressGit.git = git = require "./ezgit"
 expressGit.services = require "./services"
+RepoManager = require "./repo-manager"
 
 EXPRESS_GIT_DEFAULTS =
 	git_http_backend: yes
@@ -35,6 +37,8 @@ expressGit.serve = (root, options) ->
 	GIT_INIT_OPTIONS = freeze options.init_options
 
 	app = express()
+	app.repositories = new RepoManager GIT_PROJECT_ROOT,
+		pattern: options.pattern
 	app.project_root = GIT_PROJECT_ROOT
 	app.git = git
 
@@ -53,44 +57,40 @@ expressGit.serve = (root, options) ->
 		"Etag": "#{object.id()}"
 		"Cache-Control": "private, max-age=#{options.max_age}, no-transform, must-revalidate"
 
+	app.getRepository = (path, init) ->
+		app.repositories.open path
+		.then (repo) -> [repo, no]
+		.catch (err) ->
+			throw err unless init
+			init_options = assign {}, GIT_INIT_OPTIONS
+			app.repositories.parse path
+			.then ([name, params, git_dir]) ->
+				app.emit "pre-init", name, params, init_options
+				.then -> app.repositories.init path, init_options
+				.then (repo) ->
+					app.emit "post-init", repo
+					.then -> [repo, yes]
+					.catch -> [repo, yes]
+
 	app.use (req, res, next) ->
+		# Initialization middleware 
+
 		NODEGIT_OBJECTS = []
-		using = (obj) ->
-			NODEGIT_OBJECTS.push obj
-			obj
-		open = (name, init=options.auto_init) ->
-			[name, params...] = ("#{name.replace /\.git$/, ''}".match options.pattern) or []
-			unless name?
-				return Promise.reject new NotFoundError "Repository not found"
+		using = (objects) ->
+			for obj in [].concat objects
+				NODEGIT_OBJECTS.push obj
+			objects
 
-			git_dir = _path.join GIT_PROJECT_ROOT, name
-
-			git.Repository.open git_dir,
-				bare: yes
-				ceilings: [GIT_PROJECT_ROOT]
+		open = (path, init) ->
+			app.getRepository path, init ?= options.auto_init
+			.then ([repo]) -> repo
 			.then using
 			.catch httpify 404
-			.catch (err) ->
-				if init and not test "-e", git_dir
-					init_options = assign {}, GIT_INIT_OPTIONS
-					app.emit "pre-init", name, params, init_options
-					.then -> git.Repository.init git_dir, init_options
-					.then using
-					.then (repo) ->
-						app.emit "post-init", name, params, repo
-						.then -> repo
-						.catch -> repo
-				else
-					throw err
 
-		refopen = (reponame, refname, callback) ->
-			repo = open reponame, no
-			ref = repo.then (re) ->
-				if refname
-					re.getReference refname
-				else
-					re.head()
-			Promise.join repo, ref.then(using), callback
+		refopen = (path, refname) ->
+			app.repositories.refopen path, refname
+			.then using
+			.catch httpify 404
 
 		req.git = freeze req.git, {using, open, refopen, NODEGIT_OBJECTS}
 		next()

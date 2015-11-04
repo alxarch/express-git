@@ -11,7 +11,8 @@ module.exports = (app, options) ->
 			unless current and message
 				return next new BadRequestError
 
-			refopen reponame, refname, (repo, ref) ->
+			refopen reponame, refname
+			.then([repo, ref]) ->
 				unless ref?
 					res.set "Allow", "PUT"
 					throw new MethodNotAllowedError
@@ -35,7 +36,8 @@ module.exports = (app, options) ->
 			unless target and message and current
 				return next new BadRequestError
 
-			refopen reponame, refname, (repo, ref) ->
+			refopen reponame, refname
+			.then ([repo, ref]) ->
 				if signature?
 					try
 						signature = git.Signature.create signature

@@ -9,7 +9,8 @@ module.exports = (app, options) ->
 			{reponame, refname} = req.params
 			{refopen, using} = req.git
 			etag = req.headers["if-none-match"]
-			refopen reponame, refname, (repo, ref) ->
+			refopen reponame, refname
+			.then ([repo, ref]) ->
 				oid = ref.target()
 				if "#{oid}" is etag
 					throw new NotModified
@@ -29,7 +30,8 @@ module.exports = (app, options) ->
 			unless path
 				return next new BadRequestError
 			etag = req.headers["if-none-match"]
-			refopen reponame, refname, (repo, ref) ->
+			refopen reponame, refname
+			.then ([repo, ref]) ->
 				repo.getCommit ref.target()
 			.then using
 			.then (commit) -> commit.getEntry path
@@ -71,8 +73,8 @@ module.exports = (app, options) ->
 			{reponame, path, refname} = req.params
 			{refopen, using} = req.git
 			etag = req.headers["if-none-match"]
-			refopen reponame, refname, (repo, ref) ->
-				repo.getCommit ref.target()
+			refopen reponame, refname
+			.then ([repo, ref]) -> repo.getCommit ref.target()
 			.then using
 			.then (commit) ->
 				if path

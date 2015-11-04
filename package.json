@@ -23,6 +23,7 @@
     "coffee-script": "^1.9.3",
     "events-as-promised": "^0.1.4",
     "express": "^4.12.4",
+    "lodash": "^3.10.1",
     "mime-types": "^2.0.13",
     "mkdirp": "^0.5.1",
     "mockery": "^1.4.0",

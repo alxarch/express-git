@@ -32,8 +32,8 @@ module.exports = (app, options) ->
 				return next new BadRequestError
 			etag = req.headers['if-none-match']
 			{refopen, using} = req.git
-			refopen reponame, refname, (repo, ref) ->
-				repo.getCommit ref.target()
+			refopen reponame, refname
+			.then ([repo, ref]) -> repo.getCommit ref.target()
 			.then using
 			.then (commit) -> commit.getEntry path
 			.then using
