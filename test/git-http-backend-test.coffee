@@ -10,7 +10,7 @@ describe "git-http-backend service", ->
 	PORT = 20000 + (new Date().getTime() % 10000) | 0
 	REPO = "testrepo-#{new Date().getTime()}"
 	before ->
-		mkdir TMP_DIR = "tmp/express-git-test-#{new Date().getTime()}"
+		mkdir "-p", TMP_DIR = "#{process.cwd()}/tmp/express-git-test-#{new Date().getTime()}"
 		mkdir GIT_PROJECT_ROOT = "#{TMP_DIR}/repos"
 		mkdir SOURCE_DIR = "#{TMP_DIR}/source"
 		mkdir DEST_DIR = "#{TMP_DIR}/dest"

@@ -1,5 +1,5 @@
 mime = require "mime-types"
-{httpify} = require "../helpers"
+{httpify, assign} = require "../helpers"
 
 module.exports = (app, options) ->
 	{NotModified, NotFoundError, BadRequestError} = app.errors
@@ -10,14 +10,13 @@ module.exports = (app, options) ->
 			{reponame, oid} = req.params
 			if oid is req.headers['if-none-match']
 				return next new NotModified
-			{open, using} = req.git
-			open reponame, no
-			.then (repo) -> repo.getBlob oid
-			.then using
-			.catch httpify 404
-			.then (blob) ->
-				res.set app.cacheHeaders blob
-				res.set
+			{repositories, disposable} = req.git
+
+			repositories.blob reponame, oid
+			.then ([blob]) ->
+				unless blob?
+					throw new NotFoundError "Blob not found"
+				res.set assign app.cacheHeaders blob,
 					"Content-Type": "application/octet-stream"
 					"Content-Length": blob.rawsize()
 				res.end blob.content()
@@ -31,23 +30,20 @@ module.exports = (app, options) ->
 			unless path
 				return next new BadRequestError
 			etag = req.headers['if-none-match']
-			{refopen, using} = req.git
-			refopen reponame, refname
-			.then ([repo, ref]) -> repo.getCommit ref.target()
-			.then using
-			.then (commit) -> commit.getEntry path
-			.then using
-			.then (entry) ->
+			{repositories, disposable} = req.git
+			repositories.entry reponame, refname, path
+			.then ([entry]) ->
+				unless entry?
+					throw new NotFoundError "Entry not found"
 				unless entry.isBlob()
 					throw new BadRequestError
 				if etag is "#{entry.sha()}"
 					throw new NotModified
 				entry.getBlob()
-			.then using
+			.then disposable
 			.catch httpify 404
 			.then (blob) ->
-				res.set app.cacheHeaders blob
-				res.set
+				res.set assign app.cacheHeaders(blob),
 					"Content-Type": mime.lookup(path) or "application/octet-stream"
 					"Content-Length": blob.rawsize()
 				res.end blob.content()

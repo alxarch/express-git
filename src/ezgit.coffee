@@ -173,13 +173,14 @@ assign g.Repository::,
 
 		message = options.message or "Commit #{new Date()}"
 
-		Promise.join ref, tree, parents, (ref, tree, parents) =>
+		Promise.all [ref, tree, parents]
+		.then ([ref, tree, parents]) =>
 			author ?= @defaultSignature()
 			committer ?= @defaultSignature()
 			parent_count = parents.length
-			g.Commit.create @, ref, author, committer, null, message, tree, parent_count, parents
+			Promise.resolve g.Commit.create @, ref, author, committer, null, message, tree, parent_count, parents
 		.then (oid) =>
-			g.Commit.lookup @, oid
+			Promise.resolve g.Commit.lookup @, oid
 
 	find: (where) -> g.Revparse.single @, where
 
@@ -187,7 +188,7 @@ assign g.Repository::,
 		oid = g.Oid.fromAnything target
 		force = if options.force then 1 else 0
 		sig = options.signature or Signature.default @
-		g.Reference.create @, name, oid, force, sig, message or ""
+		Promise.resolve g.Reference.create @, name, oid, force, sig, message or ""
 
 # Object.defineProperty g.Revwalk::, 'repo',
 # 	get: -> @repository()

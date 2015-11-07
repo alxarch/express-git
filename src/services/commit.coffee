@@ -1,52 +1,80 @@
 Busboy = require "busboy"
 Promise = require "bluebird"
 _path = require "path"
-{httpify} = require "../helpers"
-os = require "os"
+{workdir, httpify} = require "../helpers"
 {createWriteStream} = require "fs"
 rimraf = Promise.promisify require "rimraf"
 mkdirp = Promise.promisify require "mkdirp"
 git = require "../ezgit"
 
+processCommitForm = (req, workdir, path) ->
+	bb = new Busboy headers: req.headers
+	files = []
+	add = []
+	bb.on "file", (filepath, file) ->
+		filepath = _path.join (path or ""), filepath
+		dest = _path.join workdir, filepath
+		files.push (mkdirp _path.dirname dest).then ->
+			new Promise (resolve, reject) ->
+				file.on "end", ->
+					add.push filepath
+					resolve()
+				file.on "error", reject
+				file.pipe createWriteStream dest
+
+	commit = {}
+	remove = []
+	bb.on "field", (fieldname, value) ->
+		if fieldname is "remove"
+			remove.push value
+		else
+			commit[fieldname] = value
+
+	form = new Promise (resolve) ->
+		bb.on "finish", ->
+			Promise.all files
+			.then -> resolve {add, remove, commit}
+	req.pipe bb
+	form
+
 module.exports = (app, options) ->
 	{ConflictError, BadRequestError} = app.errors
 
 	app.post "/:reponame(.*).git/:refname(.*)?/commit/:path(.*)?", app.authorize("commit"), (req, res, next) ->
-		{using, open} = req.git
 		{reponame, refname, path} = req.params
+		{repositories, disposable} = req.git
 		etag = req.headers['x-parent-id'] or req.query?.parent or "#{git.Oid.ZERO}"
-		repo = open reponame
-		refname ?= "HEAD"
+		WORKDIR = workdir()
+		form = processCommitForm req, WORKDIR, path
+		repo = repositories.openOrInit(reponame).then ([repo]) -> repo
 		ref = repo.then (repo) ->
-				git.Reference.find repo, refname
-			.then using
+			refname ?= "HEAD"
+			git.Reference.find repo, refname
+			.then disposable
+			.catch httpify 404
 			.then (ref) ->
 				if ref?.isSymbolic()
 					refname = ref.symbolicTarget()
-					return null
+					ref = null
 				else if ref?
 					refname = ref.name()
-				ref
-			.catch httpify 404
-
-		checkref = ->
-			ref.then (ref) ->
 				if ref? and "#{ref.target()}" isnt etag
 					throw new ConflictError
 				ref
-		ref = checkref()
 
 		parent = Promise.join repo, ref, (repo, ref) ->
-			if ref? then repo.getCommit ref.target() else null
-		.then using
-
-		tree = parent
-			.then (commit) -> commit?.getTree()
-			.then using
+			if ref?
+				disposable repo.getCommit ref.target()
+			else
+				null
+		tree = parent.then (parent) ->
+			parent?.getTree()
+			.then disposable
 			.then (tree) ->
-				return tree unless path
+				unless path
+					return tree
 				tree?.entryByPath path
-				.then using
+				.then disposable
 				.then (entry) ->
 					if entry.isBlob()
 						throw new BadRequestError()
@@ -54,77 +82,62 @@ module.exports = (app, options) ->
 
 		index = Promise.join repo, tree, (repo, tree) ->
 			repo.index()
-			.then using
+			.then disposable
 			.then (index) ->
 				index.clear()
 				if tree
 					index.readTree tree
 				index
 
-		workdir = _path.join os.tmpdir(), "express-git-#{new Date().getTime()}"
-		Promise.join repo, parent, index, mkdirp(workdir), (repo, parent, index) ->
-			repo.setWorkdir workdir, 0
-			bb = new Busboy headers: req.headers
-			files = []
-			add = []
-			bb.on "file", (filepath, file) ->
-				filepath = _path.join (path or ""), filepath
-				dest = _path.join workdir, filepath
-				files.push (mkdirp _path.dirname dest).then ->
-					new Promise (resolve, reject) ->
-						file.on "end", ->
-							add.push filepath
-							resolve()
-						file.on "error", reject
-						file.pipe createWriteStream dest
+		disposable author = Promise.join repo, form, (repo, {commit}) ->
+			{created_at, author} = commit
+			if author
+			then git.Signature.create author, new Date created_at
+			else repo.defaultSignature()
 
-			commit = {}
-			remove = []
-			bb.on "field", (fieldname, value) ->
-				if fieldname is "remove"
-					remove.push value
-				else
-					commit[fieldname] = value
+		disposable committer = Promise.join author, form, (author, {commit}) ->
+			{committer} = commit
+			if committer
+			then git.Signature.create committer, new Date()
+			else git.Signature.create author, new Date()
 
-			finish = new Promise (resolve) -> bb.on "finish", -> resolve()
-			req.pipe bb
-			finish
-			.then -> Promise.all files
-			.then ->
-				for r in remove
-					index.removeByPath r
-				for a in add
-					index.addByPath a
-				index.writeTree()
-			.finally -> index.clear()
-			.then (tree) ->
-				author =
-					if commit.author
-					then git.Signature.create commit.author, new Date commit.created_at
-					else repo.defaultSignature()
-				committer =
-					if commit.committer
-					then git.Signature.create commit.committer, new Date()
-					else git.Signature.create author, new Date()
-				using committer
-				using author
+		addremove = Promise.join repo, index, form, (repo, index, {remove, add}) ->
+			repo.setWorkdir WORKDIR, 0
+			for r in remove
+				index.removeByPath r
+			for a in add
+				index.addByPath a
+			index.writeTree()
+			.then disposable
+
+		Promise.all [
+			repo
+			form
+			author
+			committer
+			parent
+			addremove
+		]
+		.then ([repo, form, author, committer, parent, tree]) ->
+			commit =
 				# Make everything modifiable
 				parents: if parent then ["#{parent.id()}" ] else []
 				ref: refname
 				tree: "#{tree}"
 				author: author.toJSON()
 				committer: committer.toJSON()
-				message: commit.message
-			.then (commit) ->
-				app.emit "pre-commit", repo, commit
-				.then -> repo.commit commit
-				.then using
-				.then (result) ->
-					commit.id = "#{result.id()}"
-					app.emit "post-commit", repo, commit
-					.then -> result
-
-		.then (commit) -> next null, res.json commit
+				message: form.commit.message
+			app.emit "pre-commit", repo, commit
+			.then -> repo.commit commit
+			.then disposable
+			.then (result) ->
+				commit.id = "#{result.id()}"
+				app.emit "post-commit", repo, commit
+				.then -> result
+			.then (commit) -> res.json commit
+		.finally -> rimraf WORKDIR
+		.then -> next()
 		.catch next
-		.finally -> rimraf workdir
-		.catch -> null
+
+for own key, value of {processCommitForm}
+	module.exports[key] = value

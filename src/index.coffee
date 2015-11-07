@@ -37,8 +37,6 @@ expressGit.serve = (root, options) ->
 	GIT_INIT_OPTIONS = freeze options.init_options
 
 	app = express()
-	app.repositories = new RepoManager GIT_PROJECT_ROOT,
-		pattern: options.pattern
 	app.project_root = GIT_PROJECT_ROOT
 	app.git = git
 
@@ -57,42 +55,23 @@ expressGit.serve = (root, options) ->
 		"Etag": "#{object.id()}"
 		"Cache-Control": "private, max-age=#{options.max_age}, no-transform, must-revalidate"
 
-	app.getRepository = (path, init) ->
-		app.repositories.open path
-		.then (repo) -> [repo, no]
-		.catch (err) ->
-			throw err unless init
-			init_options = assign {}, GIT_INIT_OPTIONS
-			app.repositories.parse path
-			.then ([name, params, git_dir]) ->
-				app.emit "pre-init", name, params, init_options
-				.then -> app.repositories.init path, init_options
-				.then (repo) ->
-					app.emit "post-init", repo
-					.then -> [repo, yes]
-					.catch -> [repo, yes]
-
 	app.use (req, res, next) ->
 		# Initialization middleware 
-
 		NODEGIT_OBJECTS = []
-		using = (objects) ->
-			for obj in [].concat objects
-				NODEGIT_OBJECTS.push obj
-			objects
+		disposable = (value) ->
+			NODEGIT_OBJECTS.push Promise.resolve value
+			value
 
-		open = (path, init) ->
-			app.getRepository path, init ?= options.auto_init
-			.then ([repo]) -> repo
-			.then using
-			.catch httpify 404
+		repositories = new RepoManager GIT_PROJECT_ROOT,
+			pattern: options.pattern
+			auto_init: options.auto_init
+			disposable: disposable
+			init_options: GIT_INIT_OPTIONS
 
-		refopen = (path, refname) ->
-			app.repositories.refopen path, refname
-			.then using
-			.catch httpify 404
+		# Hack to emit repositories events from app
+		repositories.emit = app.emit.bind app
 
-		req.git = freeze req.git, {using, open, refopen, NODEGIT_OBJECTS}
+		req.git = freeze req.git, {repositories, disposable, NODEGIT_OBJECTS}
 		next()
 
 	if options.browse
@@ -107,13 +86,12 @@ expressGit.serve = (root, options) ->
 	if options.refs
 		expressGit.services.refs app, options
 
-	# Cleanup nodegit objects
 	app.use (req, res, next) ->
-		for obj in req.git.NODEGIT_OBJECTS when typeof obj?.free is "function"
-			try
-				obj.free()
-		next()
-
+		Promise.settle req.git.NODEGIT_OBJECTS
+		.map (inspection) ->
+			if inspection.isFulfilled()
+				try
+					inspection.value()?.free()
 	app
 
 if require.main is module

@@ -16,18 +16,19 @@ module.exports = (app, options={}) ->
 
 	app.post ":reponame(.*).git/git-upload-pack", app.authorize("upload-pack"), (req, res, next) ->
 		res.set headers "upload-pack"
-		req.git.open req.params.reponame
-		.then (repo) ->
+		{repositories} = req.git
+		repositories.openOrInit req.params.reponame
+		.then ([repo]) ->
 			args = ["upload-pack", "--stateless-rpc", repo.path()]
 			spawn GIT_EXEC, args, stdio: [req, res, res]
 		.then -> next()
 		.catch next
 
 	app.post ":reponame(.*).git/git-receive-pack", app.authorize("receive-pack"), (req, res, next) ->
-		{open} = req.git
-
 		res.set headers "receive-pack"
-		repo = open req.params.reponame
+		{repositories} = req.git
+		{reponame} = req.params
+		repo = repositories.openOrInit(reponame).then ([repo]) -> repo
 		pack = new Promise (resolve, reject) ->
 			git = new GitUpdateRequest()
 			git.on "error", reject
@@ -44,29 +45,23 @@ module.exports = (app, options={}) ->
 					capabilities = null
 				pktline "#{line}\n"
 
-
 			app.emit "pre-receive", repo, changes
-			.then ->
-				Promise.all changes.map (change, i) ->
-					app.emit "update", repo, change
-					.then -> change
-					.catch (err) -> null
+			.then -> Promise.map changes, (change, i) ->
+				app.emit "update", repo, change
+				.then -> change
+				.catch -> null
 			.then (changes) ->
-
 				changes = (c for c in changes when c?)
-
 				return unless changes.length > 0
 				git = spawn GIT_EXEC, ["receive-pack", "--stateless-rpc", repo.path()]
 
 				{stdin, stdout, stderr} = git.process
 				stdout.pipe res, end: no
 				stderr.pipe res, end: no
-				for change in changes
-					stdin.write changeline change
+				(stdin.write changeline change for change in changes)
 				stdin.write ZERO_PKT_LINE
 
 				pack.pipe stdin
-
 				git
 			.then -> app.emit "post-receive", repo, changes
 		.finally -> res.end()
@@ -77,14 +72,15 @@ module.exports = (app, options={}) ->
 	# via git receive-pack/upload-pack commands
 	app.get "/:reponame(.*).git/info/refs", app.authorize("advertise-refs"), (req, res, next) ->
 		{service} = req.query
-
 		unless service in ["git-receive-pack", "git-upload-pack"]
 			return next new BadRequestError
 
 		service = service.replace "git-", ""
+		{repositories}  = req.git
+		{reponame} = req.params
 
-		req.git.open req.params.reponame
-		.then (repo) ->
+		repositories.openOrInit reponame
+		.then ([repo]) ->
 			res.set headers service, "advertisement"
 			res.write pktline "# service=git-#{service}\n"
 			res.write ZERO_PKT_LINE

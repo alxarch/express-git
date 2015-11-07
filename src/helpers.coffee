@@ -1,5 +1,5 @@
 os = require "os"
-path = require "path"
+_path = require "path"
 {spawn, exec} = require "child_process"
 Promise = require "bluebird"
 assign = (base, others...) ->
@@ -77,3 +77,4 @@ module.exports =
 		(err) ->
 			err.status ?= status
 			throw err
+	workdir: -> _path.join os.tmpdir(), "express-git-#{new Date().getTime()}"

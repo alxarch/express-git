@@ -3,13 +3,19 @@ Promise = require "bluebird"
 _path = require "path"
 git = require "./ezgit"
 
-class RepoManager
+EventEmitter = require "events-as-promised"
+using = (handler, chain) -> git.using chain, handler
+
+class RepoManager extends EventEmitter
 	module.exports = @
+
 	constructor: (@root, options={}) ->
 		@options = _.defaults {}, options,
 			pattern: /.*/
 			auto_init: yes
 			init_options: {}
+			disposable: (a) -> a
+		@disposable = @options.disposable
 
 	parse: (path) ->
 		name = path.replace /\.git$/, ""
@@ -21,21 +27,30 @@ class RepoManager
 				git_dir = _path.join @root, name
 				[name, params, git_dir]
 
-	refopen: (path, refname) ->
+	ref: (path, refname) ->
 		@open path
-		.then (repo) ->
-			if refname
-				ref = repo.getReference refname
+		.then (repo) =>
+			if not repo?
+				[null, null]
+			else if refname
+				repo.getReference refname
+				.then @disposable
+				.then (ref) -> [ref, repo]
 			else
-				ref = repo.head()
-			ref.then (ref) -> [repo, ref]
+				repo.head()
+				.then @disposable
+				.then (ref) -> [ref, repo]
 
 	openOrInit: (path, options) ->
 		@open path
-		.then (repo) -> [repo, no]
-		.catch (err) =>
-			@init path, options
-			.then (repo) -> [repo, yes]
+		.then (repo) =>
+			if repo?
+				[repo, no]
+			else if @options.auto_init
+				@init path, options
+				.then (repo) -> [repo, yes]
+			else
+				[null, no]
 
 	open: (path) ->
 		@parse path
@@ -43,12 +58,47 @@ class RepoManager
 			git.Repository.open git_dir,
 				bare: yes
 				ceilings: [@root]
-			.tap (repo) -> _.assign repo, {name, params, git_dir}
+			.then @disposable
+			.catch -> null
+			.then (repo) -> _.assign repo, {name, params, git_dir}
 
 	init: (path, options={}) ->
 		@parse path
 		.then ([name, params, git_dir]) =>
-			git.Repository.init git_dir, options
-			.tap (repo) -> _.assign repo, {name, params, git_dir}
-	
+			init_options = _.assign {}, @options.init_options, options
+			@emit "pre-init", name, params, init_options
+			.then -> git.Repository.init git_dir, options
+			.then @disposable
+			.catch -> null
+			.then (repo) -> _.assign repo, {name, params, git_dir}
+			.then (repo) =>
+				if repo?
+					@emit "post-init", repo
+					.then -> repo
+				else
+					repo
 
+	blob: (reponame, oid, handler) ->
+		@open reponame
+		.then (repo) =>
+			repo.getBlob oid
+			.then @disposable
+			.then (blob) -> [blob, repo]
+
+	entry: (reponame, refname, path, handler) ->
+		@commit reponame, refname
+		.then ([commit, ref, repo]) ->
+			unless commit?
+				return [null, null, null, null]
+			commit.getEntry path
+			.then @disposable
+			.then (entry) -> [entry, commit, ref, repo]
+
+	commit: (reponame, refname, handler) ->
+		@ref reponame, refname
+		.then ([ref, repo]) =>
+			unless repo?
+				return [null, null, null]
+			repo.getCommit ref.target()
+			.then @disposable
+			.then (commit) -> [commit, ref, repo]

@@ -2,47 +2,45 @@
 mime = require "mime-types"
 _path = require "path"
 module.exports = (app, options) ->
-	{BadRequestError, NotModified} = app.errors
+	{BadRequestError, NotModified, NotFoundError} = app.errors
 	app.get "/:reponame(.*).git/:refname(.*)?/commit",
 		app.authorize "browse"
 		(req, res, next) ->
 			{reponame, refname} = req.params
-			{refopen, using} = req.git
+			{repositories, disposable} = req.git
 			etag = req.headers["if-none-match"]
-			refopen reponame, refname
-			.then ([repo, ref]) ->
-				oid = ref.target()
-				if "#{oid}" is etag
+			repositories.ref reponame, refname
+			.then ([ref, repo]) ->
+				unless repo? and ref?
+					throw new NotFoundError
+				if "#{ref.target()}" is etag
 					throw new NotModified
-				repo.getCommit oid
-			.then using
+				repo.getCommit ref.target()
+			.then disposable
 			.then (commit) ->
 				res.set app.cacheHeaders commit
 				res.json assign {type: "commit"}, commit.toJSON()
-				next()
+			.then -> next()
 			.catch next
 
 	app.get "/:reponame(.*).git/:refname(.*)?/blob/:path(.*)",
 		app.authorize "browse"
 		(req, res, next) ->
-			{using, refopen} = req.git
 			{reponame, path, refname} = req.params
 			unless path
 				return next new BadRequestError
+			{repositories, disposable} = req.git
 			etag = req.headers["if-none-match"]
-			refopen reponame, refname
-			.then ([repo, ref]) ->
-				repo.getCommit ref.target()
-			.then using
-			.then (commit) -> commit.getEntry path
-			.then using
-			.then (entry) ->
+			repositories.entry reponame, refname, path
+			.then ([entry]) ->
+				unless entry?
+					throw new NotFoundError "Entry not found"
 				if entry.isTree()
 					throw new BadRequestError
 				if entry.sha() is etag
 					throw new NotModified
 				entry.getBlob()
-			.then using
+			.then disposable
 			.then (blob) ->
 				binary = if blob.isBinary() then yes else no
 				size = blob.rawsize()
@@ -63,7 +61,7 @@ module.exports = (app, options) ->
 					truncated: truncate
 					encoding: encoding
 					size: size
-				next()
+			.then -> next()
 			.catch httpify 404
 			.catch next
 
@@ -71,14 +69,14 @@ module.exports = (app, options) ->
 		app.authorize "browse"
 		(req, res, next) ->
 			{reponame, path, refname} = req.params
-			{refopen, using} = req.git
+			{repositories, disposable} = req.git
+
 			etag = req.headers["if-none-match"]
-			refopen reponame, refname
-			.then ([repo, ref]) -> repo.getCommit ref.target()
-			.then using
-			.then (commit) ->
+			repositories.commit reponame, refname
+			.then ([commit]) ->
 				if path
 					commit.getEntry path
+					.then disposable
 					.then (entry) ->
 						unless entry.isTree()
 							throw new BadRequestError
@@ -87,7 +85,7 @@ module.exports = (app, options) ->
 						entry.getTree()
 				else
 					commit.getTree()
-			.then using
+			.then disposable
 			.then (tree) ->
 				res.set app.cacheHeaders tree
 				res.json
@@ -96,5 +94,5 @@ module.exports = (app, options) ->
 					name: _path.basename path
 					path: path
 					entries: (entry.toJSON() for entry in tree.entries())
-				next()
+			.then -> next()
 			.catch next

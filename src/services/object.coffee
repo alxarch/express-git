@@ -7,13 +7,13 @@ module.exports = (app, options) ->
 		app.authorize "browse"
 		(req, res, next) ->
 			{reponame, oid} = req.params
-			{using, open} = req.git
+			{repositories, disposable} = req.git
 			if oid is req.headers["if-none-match"]
 				return next new NotModified
 
-			open reponame, no
+			repositories.open reponame
 			.then (repo) -> git.Object.lookup repo, oid
-			.then using
+			.then disposable
 			.then (object) ->
 				switch object.type()
 					when BLOB
@@ -26,7 +26,7 @@ module.exports = (app, options) ->
 						git.Tag.lookup repo, oid
 					else
 						throw new BadRequestError
-			.then using
+			.then disposable
 			.catch httpify 404
 			.then (object) ->
 				res.set app.cacheHeaders object
