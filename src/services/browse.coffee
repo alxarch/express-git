@@ -3,13 +3,13 @@ mime = require "mime-types"
 _path = require "path"
 module.exports = (app, options) ->
 	{BadRequestError, NotModified, NotFoundError} = app.errors
-	app.get "/:reponame(.*).git/:refname(.*)?/commit",
+	app.get "/:git_repo(.*).git/:refname(.*)?/commit",
 		app.authorize "browse"
 		(req, res, next) ->
-			{reponame, refname} = req.params
+			{git_repo, refname} = req.params
 			{repositories, disposable} = req.git
 			etag = req.headers["if-none-match"]
-			repositories.ref reponame, refname
+			repositories.ref git_repo, refname
 			.then ([ref, repo]) ->
 				unless repo? and ref?
 					throw new NotFoundError
@@ -23,15 +23,15 @@ module.exports = (app, options) ->
 			.then -> next()
 			.catch next
 
-	app.get "/:reponame(.*).git/:refname(.*)?/blob/:path(.*)",
-		app.authorize "browse"
+	app.get "/:git_repo(.*).git/:refname(.*)?/blob/:path(.*)",
+		app.authorize("browse")
 		(req, res, next) ->
-			{reponame, path, refname} = req.params
+			{git_repo, path, refname} = req.params
 			unless path
 				return next new BadRequestError
 			{repositories, disposable} = req.git
 			etag = req.headers["if-none-match"]
-			repositories.entry reponame, refname, path
+			repositories.entry git_repo, refname, path
 			.then ([entry]) ->
 				unless entry?
 					throw new NotFoundError "Entry not found"
@@ -65,14 +65,14 @@ module.exports = (app, options) ->
 			.catch httpify 404
 			.catch next
 
-	app.get "/:reponame(.*).git/:refname(.*)?/tree/:path(.*)?",
+	app.get "/:git_repo(.*).git/:refname(.*)?/tree/:path(.*)?",
 		app.authorize "browse"
 		(req, res, next) ->
-			{reponame, path, refname} = req.params
+			{git_repo, path, refname} = req.params
 			{repositories, disposable} = req.git
 
 			etag = req.headers["if-none-match"]
-			repositories.commit reponame, refname
+			repositories.commit git_repo, refname
 			.then ([commit]) ->
 				if path
 					commit.getEntry path

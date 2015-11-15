@@ -40,13 +40,13 @@ processCommitForm = (req, workdir, path) ->
 module.exports = (app, options) ->
 	{ConflictError, BadRequestError} = app.errors
 
-	app.post "/:reponame(.*).git/:refname(.*)?/commit/:path(.*)?", app.authorize("commit"), (req, res, next) ->
-		{reponame, refname, path} = req.params
+	app.post "/:git_repo(.*).git/:refname(.*)?/commit/:path(.*)?", app.authorize("commit"), (req, res, next) ->
+		{git_repo, refname, path} = req.params
 		{repositories, disposable} = req.git
 		etag = req.headers['x-parent-id'] or req.query?.parent or "#{git.Oid.ZERO}"
 		WORKDIR = workdir()
 		form = processCommitForm req, WORKDIR, path
-		repo = repositories.openOrInit(reponame).then ([repo]) -> repo
+		repo = repositories.openOrInit(git_repo).then ([repo]) -> repo
 		ref = repo.then (repo) ->
 			refname ?= "HEAD"
 			git.Reference.find repo, refname

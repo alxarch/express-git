@@ -56,7 +56,7 @@ expressGit.serve = (root, options) ->
 		"Cache-Control": "private, max-age=#{options.max_age}, no-transform, must-revalidate"
 
 	app.use (req, res, next) ->
-		# Initialization middleware 
+		# Initialization middleware
 		NODEGIT_OBJECTS = []
 		disposable = (value) ->
 			NODEGIT_OBJECTS.push Promise.resolve value
@@ -72,6 +72,15 @@ expressGit.serve = (root, options) ->
 		repositories.emit = app.emit.bind app
 
 		req.git = freeze req.git, {repositories, disposable, NODEGIT_OBJECTS}
+		next()
+
+	app.param "git_repo", (req, res, next, path) ->
+		try
+			[name, params, git_dir] = req.git.repositories.parse path
+		catch err
+			err.status ?= 400
+			return next err
+		req.git_repo = {name, params, git_dir}
 		next()
 
 	if options.browse
