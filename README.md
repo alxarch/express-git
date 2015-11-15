@@ -80,8 +80,8 @@ Enable the [refs service](#refs-service).
 
 > default: noop
 
-A `(service, callback)` hook to use to authorize requests.
-As with hooks `this.req` and `this.res` will be bound to the request and response objects. To prevent an action, pass an error to the callback.
+A `(service, req, callback)` hook to use to authorize requests.
+To prevent an action, pass an error to the callback.
 
 ### options.pattern
 
