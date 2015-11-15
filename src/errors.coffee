@@ -45,7 +45,7 @@ class ConflictError extends HttpError
 
 httpErrorHandler = (err, req, res, next) ->
 	status = parseInt err.status or err.statusCode
-	if status
+	if status and not res.headersSent
 		res.status status
 		if status < 400
 			res.end()
