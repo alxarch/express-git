@@ -23,7 +23,7 @@ module.exports = (app, options) ->
 				when TAG
 					git.Tag.lookup repo, oid
 				else
-					throw new BadRequestError
+					throw new BadRequestError "Invalid object type"
 		.then disposable
 		.catch httpify 404
 		.then (object) ->

@@ -77,7 +77,7 @@ module.exports = (app, options) ->
 				.then disposable
 				.then (entry) ->
 					if entry.isBlob()
-						throw new BadRequestError()
+						throw new BadRequestError "Entry is not a blob"
 					tree
 
 		index = Promise.join repo, tree, (repo, tree) ->

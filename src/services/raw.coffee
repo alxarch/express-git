@@ -8,7 +8,7 @@ module.exports = (app, options) ->
 		{git_repo, oid} = req.params
 		if oid is req.headers['if-none-match']
 			return next new NotModified
-		{repositories, disposable} = req.git
+		{repositories} = req.git
 
 		repositories.blob git_repo, oid
 		.then ([blob]) ->
