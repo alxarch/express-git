@@ -10,11 +10,8 @@ var app = express();
 app.use("/git", expressGit.serve("path/torepos/", {
 	auto_init: true,
 	serve_static: true,
-	authorize: function (service, next) {
+	authorize: function (service, req, next) {
 		// Authorize a service
-		// this.req holds the request object
-		// this.res holds the response object
-
 		next();
 	}
 });

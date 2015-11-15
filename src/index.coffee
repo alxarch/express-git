@@ -28,10 +28,11 @@ expressGit.serve = (root, options) ->
 	options = assign {}, EXPRESS_GIT_DEFAULTS, options
 	unless options.pattern instanceof RegExp
 		options.pattern = new Regexp "#{options.pattern or '.*'}"
-	if typeof options.authorize is "function"
-		GIT_AUTH = Promise.promisify options.authorize
-	else
-		GIT_AUTH = -> Promise.resolve()
+
+	GIT_AUTH =
+		if typeof options.authorize is "function"
+		then options.authorize
+		else (name, req, next) -> next()
 
 	GIT_PROJECT_ROOT = _path.resolve "#{root}"
 	GIT_INIT_OPTIONS = freeze options.init_options
@@ -46,10 +47,9 @@ expressGit.serve = (root, options) ->
 
 	app.authorize = (name) ->
 		(req, res, next) ->
-			GIT_AUTH.call {req, res}, name
-			.catch httpify 401
-			.then -> next()
-			.catch next
+			GIT_AUTH name, req, (err) ->
+				err?.status ?= 401
+				next err
 
 	app.cacheHeaders = (object) ->
 		"Etag": "#{object.id()}"
