@@ -5,21 +5,21 @@ git = require "./ezgit"
 
 EventEmitter = require "events-as-promised"
 using = (handler, chain) -> git.using chain, handler
+DEFAULT_PATTERN = /.*/
 
 class RepoManager extends EventEmitter
 	module.exports = @
 
-	constructor: (@root, options={}) ->
-		@options = _.defaults {}, options,
-			pattern: /.*/
-			auto_init: yes
-			init_options: {}
-			disposable: (a) -> a
-		@disposable = @options.disposable
+	constructor: (@root, @disposables=[], @options={}) ->
+	
+	disposable: (obj) ->
+		@disposables.push obj
+		obj
 
 	parse: (path) ->
 		name = path.replace /\.git$/, ""
-		match = name.match @options.pattern
+		pattern = @options?.pattern or DEFAULT_PATTERN
+		match = name.match pattern
 		Promise.resolve match or []
 			.then ([name, params...]) =>
 				unless name?
@@ -46,7 +46,7 @@ class RepoManager extends EventEmitter
 		.then (repo) =>
 			if repo?
 				[repo, no]
-			else if @options.auto_init
+			else if @options.auto_init isnt no
 				@init path, options
 				.then (repo) -> [repo, yes]
 			else

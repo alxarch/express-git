@@ -55,6 +55,10 @@ expressGit.serve = (root, options) ->
 		"Etag": "#{object.id()}"
 		"Cache-Control": "private, max-age=#{options.max_age}, no-transform, must-revalidate"
 
+	REPO_MANAGER_OPTIONS =
+		pattern: options.pattern
+		auto_init: options.auto_init
+		init_options: GIT_INIT_OPTIONS
 	app.use (req, res, next) ->
 		# Initialization middleware
 		NODEGIT_OBJECTS = []
@@ -62,11 +66,7 @@ expressGit.serve = (root, options) ->
 			NODEGIT_OBJECTS.push Promise.resolve value
 			value
 
-		repositories = new RepoManager GIT_PROJECT_ROOT,
-			pattern: options.pattern
-			auto_init: options.auto_init
-			disposable: disposable
-			init_options: GIT_INIT_OPTIONS
+		repositories = new RepoManager GIT_PROJECT_ROOT, NODEGIT_OBJECTS, REPO_MANAGER_OPTIONS
 
 		# Hack to emit repositories events from app
 		repositories.emit = app.emit.bind app
