@@ -44,32 +44,29 @@ g.RepositoryInitOptions.fromObject = (options) ->
 			result.mode |= "#{result.mode}" | 0
 	result
 
-g.Commit::_oidMethod = "id"
-g.Blob::_oidMethod = "id"
-g.Note::_oidMethod = "id"
-g.OdbObject::_oidMethod = "id"
-g.Object::_oidMethod = "id"
-g.Tag::_oidMethod = "id"
-g.Tree::_oidMethod = "id"
-g.TreeEntry::_oidProperty = "oid"
-g.Reference::_oidMethod = "target"
-g.IndexEntry::_oidProperty = "id"
-g.RebaseOperation::_oidProperty = "id"
-g.DiffFile::_oidProperty = "id"
+OIDS = new Map();
+OIDS.set g.AnnotatedCommit, (commit) -> commit.id()
+OIDS.set g.Blob, (blob) -> blob.id()
+OIDS.set g.Commit, (commit) -> commit.id()
+OIDS.set g.DiffFile, (diff) -> diff.id()
+OIDS.set g.IndexEntry, (entry) -> entry.id
+OIDS.set g.Note, (node) -> node.id()
+OIDS.set g.Object, (o) -> o.id()
+OIDS.set g.OdbObject, (o) -> o.id()
+OIDS.set g.Oid, (o) -> o
+OIDS.set g.RebaseOperation, (op) -> op.id
+OIDS.set g.Reference, (ref) -> ref.target()
+OIDS.set g.Tag, (tag) -> tag.id()
+OIDS.set g.Tree, (tree) -> tree.id()
+OIDS.set g.TreeEntry, (entry) -> entry.oid
 
-ZEROID = g.Oid.ZERO = g.Oid.fromString (new Array(40)).join "0"
+ZEROID_STRING = (new Array(40)).join "0"
+ZEROID = g.Oid.ZERO = g.Oid.fromString ZEROID_STRING
 
 g.Oid.fromAnything = (item) ->
-	if item instanceof g.Oid
-		item
-	else if item._oidMethod
-		item[item._oidMethod]()
-	else if item._oidProperty
-		item[item._oidProperty]
-	else if item?
-		g.Oid.fromString "#{item}"
-	else
-		g.Oid.ZERO
+	if OIDS.has item.constructor
+	then OIDS.get(item.constructor)(item)
+	else g.Oid.fromString "#{item}" or ZEROID_STRING
 
 g.Repository.INIT_DEFAULTS = Object.freeze
 	bare: yes
