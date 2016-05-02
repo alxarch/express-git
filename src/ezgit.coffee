@@ -111,7 +111,7 @@ asrev = g.Revparse.toSpec = (value) ->
 		when "object"
 			if not value
 				"HEAD"
-			if value instanceof Date
+			else if value instanceof Date
 				"HEAD@{#{value.toISOString()}}"
 			else
 				{id, rev, tag, ref, branch, date, path, offset, search, upstream, type} = value
